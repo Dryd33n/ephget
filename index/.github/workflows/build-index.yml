@@ -1,0 +1,71 @@
+name: Build index
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write # publish the release
+  actions: write # keep the schedule enabled
+
+concurrency:
+  group: build-index
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Bucket clones and the per-manifest results. If the cache is ever lost, the
+      # next build clones again and parses everything, which takes under a minute.
+      - uses: actions/cache/restore@v6
+        with:
+          path: .cache
+          key: buckets-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: buckets-
+
+      - name: Test
+        run: python3 -m unittest
+
+      - name: Build
+        run: python3 -I build_index.py --update --buckets .cache/scoop --state .cache/state.json --out out
+
+      - uses: actions/cache/save@v6
+        with:
+          path: .cache
+          key: buckets-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish to the rolling release
+        run: |
+          if ! gh release view latest > /dev/null 2>&1; then
+            gh release create latest --latest --title "Latest index" \
+              --notes "Rebuilt daily from Scoop's buckets. Sources and licences are in NOTICE.md."
+          fi
+          # One at a time with retries: GitHub can answer 500 while replacing an
+          # asset, which would leave the index and its hash out of step.
+          for file in out/index.json.gz out/index.json.gz.sha256 NOTICE.md; do
+            for attempt in 1 2 3 4; do
+              gh release upload latest "$file" --clobber && break
+              if [ "$attempt" = 4 ]; then exit 1; fi
+              sleep 15
+            done
+          done
+
+      - name: Check what clients are served
+        run: |
+          url=https://github.com/${{ github.repository }}/releases/latest/download
+          served=$(curl -fsSL "$url/index.json.gz" | sha256sum | cut -d' ' -f1)
+          listed=$(curl -fsSL "$url/index.json.gz.sha256" | cut -d' ' -f1)
+          built=$(cut -d' ' -f1 out/index.json.gz.sha256)
+          echo "built $built, served $served, listed $listed"
+          [ "$served" = "$built" ] && [ "$listed" = "$built" ]
+
+      # GitHub disables scheduled workflows after 60 days without repository
+      # activity, which this repo would otherwise reach between client releases.
+      - name: Keep the schedule enabled
+        run: gh workflow enable build-index.yml
