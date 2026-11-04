@@ -73,6 +73,7 @@ The survey stays on branch `m0-survey`, on purpose: the user doesn't want the su
 - **Removing apps:** `internal/reap` holds both `remove` and the reaper. Moving the app folder comes first, because that fails while the app runs and nothing has changed yet.
 - **`EPHGET_HOME` side effects:** with it set, nothing scans the real Desktop, Start Menu or Documents, and no command touches the real scheduled task.
 - **COM calls:** in `internal/shortcut`, an address passed to `comObject.call` must be converted to `uintptr` in that call itself, not stored in a slice or passed through a helper. Otherwise the stack can move first and COM writes to freed memory. `TestReadSurvivesStackMoves` catches this, and failed every run before the fix.
+- **Terminal output:** use `internal/ui`, not `text/tabwriter`, which counts colour codes as characters. Styling stays off unless stdout or stderr is a console, so piped output stays plain; `TestPipedOutputIsPlain` enforces this. `ephgetw` must not need it: it has no console.
 - **Footprint safety:** matches must equal the app's ID or name exactly, and `footprint.Delete` rechecks every entry. Don't loosen either: a miss leaves harmless files, while a wrong match deletes someone's data.
 - **Settings:** only `ephget remove` may lose settings kept with keep preferences on. Missing stubs may only have moved.
 - **`os/exec`:** its redirected handles also break `conhost`, so tests that need a real console must use `CreateProcess`.

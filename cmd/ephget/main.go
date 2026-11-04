@@ -12,9 +12,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
-	"text/tabwriter"
 	"time"
 
 	"github.com/Dryd33n/ephget/internal/config"
@@ -27,17 +27,36 @@ import (
 	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
 	"github.com/Dryd33n/ephget/internal/ttl"
+	"github.com/Dryd33n/ephget/internal/ui"
 )
 
-const usage = `Usage:
-  ephget search <query>
-  ephget add <id> [--ttl 7d] [--keep-prefs | --no-keep-prefs] [--pin] [--dir <folder>] [--no-start-menu]
-  ephget set <id> [--ttl 1h] [--keep-prefs | --no-keep-prefs] [--pin | --no-pin]
-  ephget remove <id>
-  ephget list
-  ephget config [--ttl 7d] [--keep-prefs | --no-keep-prefs] [--shortcut-dir <folder>] [--start-menu | --no-start-menu]
-  ephget uninstall
+const (
+	usageIntro = "Desktop shortcuts for portable apps that download on first use and clean up after themselves."
+
+	usageCommands = `  search <query>   Find an app
+  add <id>         Create its shortcuts. It downloads the first time you open it
+  list             Show your apps and when each will be removed
+  set <id>         Change an app's settings
+  remove <id>      Delete an app, its shortcuts and its saved settings
+  config           Show or change the defaults for new apps
+  uninstall        Remove ephget and everything it added
 `
+
+	usageOptions = `  add     --ttl 7d  --keep-prefs | --no-keep-prefs  --pin  --dir <folder>  --no-start-menu
+  set     --ttl 1h  --keep-prefs | --no-keep-prefs  --pin | --no-pin
+  config  --ttl 7d  --keep-prefs | --no-keep-prefs  --shortcut-dir <folder>  --start-menu | --no-start-menu
+
+  --ttl          How long after closing an app it's kept: hours or days, at least 1h
+  --keep-prefs   Keep the app's settings when it's removed for going unused
+  --pin          Stay on this version instead of the latest
+`
+)
+
+func printUsage(w io.Writer, s ui.Styler) {
+	fmt.Fprintf(w, "%s  %s\n\n", s.Bold("ephget"), usageIntro)
+	fmt.Fprintf(w, "%s\n%s\n", s.Bold("Commands"), usageCommands)
+	fmt.Fprintf(w, "%s\n%s", s.Bold("Options"), usageOptions)
+}
 
 const maxSearchResults = 25
 
@@ -46,9 +65,15 @@ func main() {
 	// tmp\ in the few seconds Windows allows.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:]); err != nil {
+	ui.Init()
+	err := run(ctx, os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		printUsage(os.Stdout, ui.Out)
+		return
+	}
+	if err != nil {
 		if !errors.Is(err, errReported) {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			ui.Errorf("%v", err)
 		}
 		stop()
 		os.Exit(1)
@@ -59,7 +84,7 @@ var errReported = errors.New("already reported")
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		fmt.Print(usage)
+		printUsage(os.Stdout, ui.Out)
 		return errReported
 	}
 	layout, err := paths.Default()
@@ -67,7 +92,7 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Print(usage)
+		printUsage(os.Stdout, ui.Out)
 		return nil
 	}
 	// Registering the task only to delete it again would be silly.
@@ -92,7 +117,9 @@ func run(ctx context.Context, args []string) error {
 	case "config":
 		return cmdConfig(layout, args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown command %q\n%s", args[0], usage)
+	ui.Errorf("unknown command %q", args[0])
+	fmt.Fprintln(os.Stderr)
+	printUsage(os.Stderr, ui.Err)
 	return errReported
 }
 
@@ -112,7 +139,7 @@ func ensureTask() {
 		return
 	}
 	if err := schedule.Ensure(schedule.TaskName, target); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: apps won't expire on schedule:", err)
+		ui.Warnf("apps won't expire on schedule: %v", err)
 	}
 }
 
@@ -156,14 +183,18 @@ func cmdSearch(ctx context.Context, layout paths.Layout, args []string) error {
 		return nil
 	}
 	shown := hits[:min(len(hits), maxSearchResults)]
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tVERSION\tDESCRIPTION")
+	out := ui.Out
+	table := ui.Table{Headers: []string{"ID", "NAME", "VERSION", "DESCRIPTION"}, Width: ui.Width(), Styler: out}
 	for _, p := range shown {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.ID, p.Name, p.Version, clip(p.Description, 60))
+		description := clip(p.Description, 60)
+		if ui.Interactive() { // the table fits it to the console instead
+			description = clip(p.Description, len(p.Description))
+		}
+		table.Rows = append(table.Rows, []ui.Cell{{Text: p.ID, Style: out.Cyan}, ui.Plain(p.Name), {Text: p.Version, Style: out.Dim}, ui.Plain(description)})
 	}
-	w.Flush()
+	fmt.Print(table)
 	if len(hits) > len(shown) {
-		fmt.Printf("...and %d more. Try a longer search.\n", len(hits)-len(shown))
+		fmt.Println(ui.Out.Dim(fmt.Sprintf("...and %d more. Try a longer search.", len(hits)-len(shown))))
 	}
 	return nil
 }
@@ -303,9 +334,9 @@ func cmdAdd(ctx context.Context, layout paths.Layout, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Added %s. It downloads the first time you open it.\n", pkg.Name)
+	ui.Success("Added %s. It downloads the first time you open it.", ui.Out.Bold(pkg.Name))
 	for _, path := range created {
-		fmt.Println(" ", path)
+		ui.Detail(path)
 	}
 	return nil
 }
@@ -369,9 +400,9 @@ func cmdRemove(layout paths.Layout, args []string) error {
 		return fmt.Errorf("%s is downloading, so nothing was removed. Close its window or wait, then try again", id)
 	}
 	if r != nil {
-		fmt.Printf("Removed %s.\n", r.ID)
+		ui.Success("Removed %s.", ui.Out.Bold(r.ID))
 		for _, path := range r.Deleted {
-			fmt.Println("  deleted", path)
+			ui.Detail("deleted " + path)
 		}
 	}
 	if err != nil {
@@ -379,7 +410,7 @@ func cmdRemove(layout paths.Layout, args []string) error {
 	}
 	if len(r.Undeleted) > 0 {
 		for _, path := range r.Undeleted {
-			fmt.Fprintln(os.Stderr, "couldn't delete", path)
+			ui.Warnf("couldn't delete %s", path)
 		}
 		fmt.Fprintln(os.Stderr, "Delete these yourself. If one is opened, it downloads the app again.")
 		return errReported
@@ -476,15 +507,15 @@ func cmdSet(ctx context.Context, layout paths.Layout, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: TTL %s, keep preferences %t", id, appTTL, keepPrefs)
+	message := fmt.Sprintf("TTL %s, keep preferences %s", appTTL, yesNo(keepPrefs))
 	if pin != nil {
-		fmt.Printf(", pinned to %s", pin.Version)
+		message += ", pinned to " + pin.Version
 	}
-	fmt.Println(". This applies from the next cleanup.")
+	ui.Success("%s: %s. This applies from the next cleanup.", ui.Out.Bold(id), message)
 	if len(failed) > 0 {
 		// State holds the new settings and is what's used; a stub only matters if
 		// state is lost, when it would bring back the old ones.
-		fmt.Fprintln(os.Stderr, "warning: couldn't update:", strings.Join(failed, ", "))
+		ui.Warnf("couldn't update: %s", strings.Join(failed, ", "))
 	}
 	return nil
 }
@@ -545,12 +576,22 @@ func cmdConfig(layout paths.Layout, args []string) error {
 	if shortcutDir == "" {
 		shortcutDir = "Desktop"
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "TTL\t%s\n", cfg.TTL)
-	fmt.Fprintf(w, "Keep preferences\t%t\n", cfg.KeepPrefs)
-	fmt.Fprintf(w, "Shortcut folder\t%s\n", shortcutDir)
-	fmt.Fprintf(w, "Start Menu\t%t\n", cfg.StartMenu)
-	return w.Flush()
+	for _, row := range [][2]string{
+		{"TTL", cfg.TTL},
+		{"Keep preferences", yesNo(cfg.KeepPrefs)},
+		{"Shortcut folder", shortcutDir},
+		{"Start Menu", yesNo(cfg.StartMenu)},
+	} {
+		fmt.Printf("%s  %s\n", ui.Out.Dim(fmt.Sprintf("%-16s", row[0])), row[1])
+	}
+	return nil
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func cmdFetch(ctx context.Context, layout paths.Layout, args []string) error {
@@ -576,10 +617,11 @@ func cmdFetch(ctx context.Context, layout paths.Layout, args []string) error {
 		if ctx.Err() != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "\nerror:", err)
+		fmt.Fprintln(os.Stderr)
+		ui.Errorf("%v", err)
 		var unavailable *fetch.PinUnavailableError
 		if errors.As(err, &unavailable) {
-			fmt.Print("Unpin it and get the latest version? [y/N] ")
+			fmt.Print(ui.Out.Bold("Unpin it and get the latest version?") + " [y/N] ")
 			answer, _ := input.ReadString('\n')
 			if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 				return errReported
@@ -590,7 +632,7 @@ func cmdFetch(ctx context.Context, layout paths.Layout, args []string) error {
 			*pin = ""
 			continue
 		}
-		fmt.Print("Retry? [y/N] ")
+		fmt.Print(ui.Out.Bold("Retry?") + " [y/N] ")
 		answer, _ := input.ReadString('\n')
 		if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 			return errReported
@@ -615,7 +657,7 @@ func unpin(layout paths.Layout, id string) error {
 	}
 	for _, stub := range reap.FindStubs(id, recorded, reap.ScanFolders(layout)) {
 		if err := shortcut.SetArguments(stub, shortcut.Arguments(id, appTTL, keepPrefs, "")); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: couldn't update:", stub)
+			ui.Warnf("couldn't update: %s", stub)
 		}
 	}
 	return nil
@@ -630,7 +672,7 @@ func cmdList(layout paths.Layout, args []string) error {
 		return err
 	}
 	if len(st) == 0 {
-		fmt.Println("No apps added yet. Find one with: ephget search <query>")
+		fmt.Println("No apps added yet. Find one with: " + ui.Out.Bold("ephget search <query>"))
 		return nil
 	}
 	// list makes no network requests; a missing or outdated catalog just means
@@ -643,21 +685,32 @@ func cmdList(layout paths.Layout, args []string) error {
 	}
 	slices.Sort(ids)
 	now := time.Now()
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSTATUS\tVERSION\tPIN\tLAST CLOSED\tREMOVED IN\tKEEP PREFS\tSHORTCUTS\tSETTINGS FOUND")
+	out := ui.Out
+	table := ui.Table{
+		Headers:   []string{"ID", "STATUS", "VERSION", "PIN", "LAST CLOSED", "REMOVED IN", "KEEP PREFS", "LINKS", "SETTINGS FOUND"},
+		Width:     ui.Width(),
+		Styler:    out,
+		HideEmpty: []string{"PIN", "SETTINGS FOUND"},
+	}
+	dimIfNone := func(text string) ui.Cell {
+		if text == "-" {
+			return ui.Cell{Text: text, Style: out.Dim}
+		}
+		return ui.Plain(text)
+	}
 	for _, id := range ids {
 		e := st[id]
-		status := "stub"
 		cached := e.Cached(layout.Home)
 		open := cached && launch.Running(filepath.Join(layout.Home, e.Path))
+		status := ui.Cell{Text: "stub", Style: out.Dim}
 		switch {
 		case open:
-			status = "open"
+			status = ui.Cell{Text: "open", Style: out.Green}
 		case cached:
-			status = "cached"
+			status = ui.Cell{Text: "cached", Style: out.Cyan}
 		}
 		if idx != nil && idx.Find(id) == nil {
-			status += " (not in catalog)"
+			status = ui.Cell{Text: status.Text + " (not in catalog)", Style: out.Yellow}
 		}
 		version, removal := "-", "-"
 		if cached {
@@ -666,21 +719,28 @@ func cmdList(layout paths.Layout, args []string) error {
 		if cached && !open { // an open app can't be removed, whatever the clock says
 			removal = timeUntilRemoval(layout, e, now)
 		}
+		removalCell := dimIfNone(removal)
+		if removal == "due" {
+			removalCell = ui.Cell{Text: removal, Style: out.Yellow}
+		}
 		pin := "-"
 		if e.Pin != nil {
 			pin = e.Pin.Version
 		}
 		closed := "-"
-		if open {
-			closed = "open"
-		} else if e.LastClosed != nil {
-			closed = e.LastClosed.Local().Format("2006-01-02 15:04")
-		} else if e.LastLaunched != nil {
-			closed = "open or unknown"
+		switch {
+		case open:
+			closed = "now"
+		case e.LastClosed != nil:
+			closed = e.LastClosed.Local().Format("Jan 2 15:04")
+		case e.LastLaunched != nil:
+			closed = "unknown"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%t\t%d\t%s\n", id, status, version, pin, closed, removal, e.KeepPrefs, len(e.Shortcuts), footprintText(e))
+		table.Rows = append(table.Rows, []ui.Cell{{Text: id, Style: out.Bold}, status, dimIfNone(version), dimIfNone(pin),
+			dimIfNone(closed), removalCell, ui.Plain(yesNo(e.KeepPrefs)), ui.Plain(strconv.Itoa(len(e.Shortcuts))), dimIfNone(footprintText(e))})
 	}
-	return w.Flush()
+	fmt.Print(table)
+	return nil
 }
 
 func footprintText(e *state.Entry) string {

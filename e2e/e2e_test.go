@@ -817,6 +817,25 @@ func TestAppRemovedFromTheCatalog(t *testing.T) {
 	}
 }
 
+// Scripts and logs read piped output, so it must stay free of colour codes and marks.
+func TestPipedOutputIsPlain(t *testing.T) {
+	e := setup(t)
+	commands := [][]string{{"help"}, {"search", "stand-in"}, {"add", "testapp", "--dir", e.stubs, "--no-start-menu"},
+		{"list"}, {"config"}, {"set", "testapp", "--ttl", "2h"}, {"nonsense"}}
+	for _, args := range commands {
+		out, _ := e.ephget(args...)
+		if out == "" {
+			t.Errorf("%v printed nothing", args)
+		}
+		if strings.ContainsAny(out, "\x1b\u2713\u221a\u2588") {
+			t.Errorf("%v isn't plain: %q", args, out)
+		}
+	}
+	if out, err := e.ephget("add", "--help"); err != nil || !strings.Contains(out, "Commands") {
+		t.Errorf("add --help: %v\n%s", err, out)
+	}
+}
+
 func TestEphgetwHasNoNetworkCode(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "github.com/Dryd33n/ephget/cmd/ephgetw").CombinedOutput()
 	if err != nil {

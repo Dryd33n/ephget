@@ -11,6 +11,7 @@ import (
 
 	"github.com/Dryd33n/ephget/internal/fsutil"
 	"github.com/Dryd33n/ephget/internal/index"
+	"github.com/Dryd33n/ephget/internal/ui"
 )
 
 const (
@@ -28,7 +29,7 @@ func (c *Client) LoadIndex(ctx context.Context) (*index.Index, error) {
 			return idx, nil
 		}
 		// A damaged or outdated local copy shouldn't wait out the day.
-		fmt.Fprintf(c.Warn, "warning: local index unusable, downloading it again: %v\n", err)
+		fmt.Fprintf(c.Warn, "%s local index unusable, downloading it again: %v\n", ui.Err.Yellow("warning:"), err)
 	}
 	refreshErr := c.refresh(ctx, statErr == nil)
 	if refreshErr == nil {
@@ -41,7 +42,7 @@ func (c *Client) LoadIndex(ctx context.Context) (*index.Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("couldn't download the app catalog: %w", refreshErr)
 	}
-	fmt.Fprintf(c.Warn, "warning: using an old copy of the app catalog: %v\n", refreshErr)
+	fmt.Fprintf(c.Warn, "%s using an old copy of the app catalog: %v\n", ui.Err.Yellow("warning:"), refreshErr)
 	return idx, nil
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/Dryd33n/ephget/internal/paths"
 	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/ui"
 )
 
 // IndexURL is where the catalog is published.
@@ -165,7 +166,7 @@ func (c *Client) FetchPinned(ctx context.Context, id, pinVersion string) error {
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.Out, "Downloading %s %s\n%s\n", pkg.Name, pkg.Version, inst.URL)
+	fmt.Fprintf(c.Out, "Downloading %s %s\n%s\n", ui.Out.Bold(pkg.Name), pkg.Version, ui.Out.Dim(inst.URL))
 	file := filepath.Join(work, "download")
 	if err := c.download(ctx, inst, file); err != nil {
 		var status *statusError

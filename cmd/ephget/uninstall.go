@@ -19,6 +19,7 @@ import (
 	"github.com/Dryd33n/ephget/internal/schedule"
 	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/ui"
 )
 
 const createNoWindow = 0x08000000
@@ -59,11 +60,11 @@ func cmdUninstall(layout paths.Layout, args []string) error {
 		}
 	}
 
-	fmt.Println("This removes:")
+	fmt.Println(ui.Out.Bold("This removes:"))
 	fmt.Printf("  %d added apps and their downloads, in %s\n", len(st), layout.Home)
 	fmt.Println("  settings ephget saved for apps that aren't downloaded (prefs folder)")
 	for _, stub := range stubs {
-		fmt.Println("  shortcut", stub)
+		ui.Detail("shortcut " + stub)
 	}
 	var settings []string
 	for _, e := range st {
@@ -72,13 +73,13 @@ func cmdUninstall(layout paths.Layout, args []string) error {
 		}
 	}
 	for _, entry := range settings {
-		fmt.Println("  settings", entry)
+		ui.Detail("settings " + entry)
 	}
 	if realInstall {
 		fmt.Println("  the", schedule.TaskName, "scheduled task and the PATH entry")
 	}
 	fmt.Println("Settings of apps with keep preferences on stay where they are, outside this folder.")
-	fmt.Print("Uninstall ephget? [y/N] ")
+	fmt.Print(ui.Out.Bold("Uninstall ephget?") + " [y/N] ")
 	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 		fmt.Println("Nothing was changed.")
@@ -110,7 +111,7 @@ func cmdUninstall(layout paths.Layout, args []string) error {
 	note(removeProgram(layout.Home))
 
 	for _, problem := range problems {
-		fmt.Fprintln(os.Stderr, "couldn't finish:", problem)
+		ui.Warnf("couldn't finish: %s", problem)
 	}
 	if len(notFound) > 0 {
 		fmt.Println("These shortcuts weren't found. If they still exist, delete them yourself:")
@@ -121,7 +122,7 @@ func cmdUninstall(layout paths.Layout, args []string) error {
 	if len(problems) > 0 {
 		return errReported
 	}
-	fmt.Println("ephget is uninstalled.")
+	ui.Success("ephget is uninstalled.")
 	return nil
 }
 
