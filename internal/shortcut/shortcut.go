@@ -25,6 +25,7 @@ var (
 	procCoCreateInstance     = ole32.NewProc("CoCreateInstance")
 	procCoTaskMemFree        = ole32.NewProc("CoTaskMemFree")
 	procSHGetKnownFolderPath = shell32.NewProc("SHGetKnownFolderPath")
+	procSHChangeNotify       = shell32.NewProc("SHChangeNotify")
 
 	clsidShellLink  = syscall.GUID{Data1: 0x00021401, Data4: [8]byte{0xC0, 0, 0, 0, 0, 0, 0, 0x46}}
 	iidIShellLinkW  = syscall.GUID{Data1: 0x000214F9, Data4: [8]byte{0xC0, 0, 0, 0, 0, 0, 0, 0x46}}
@@ -49,6 +50,8 @@ const (
 	slotSetWorkingDirectory = 9
 	slotGetArguments        = 10
 	slotSetArguments        = 11
+	slotGetIconLocation     = 16
+	slotSetIconLocation     = 17
 	slotSetPath             = 20
 
 	slotPersistLoad = 5
@@ -60,6 +63,9 @@ const (
 	coinitApartment    = 2
 	rpcEChangedMode    = 0x80010106
 	stgmRead           = 0
+	stgmReadWrite      = 2
+	shcneUpdateItem    = 0x2000
+	shcnfPath          = 0x0005
 	maxText            = 4096
 )
 
@@ -69,11 +75,18 @@ type Link struct {
 	Arguments   string
 	Description string
 	WorkingDir  string
+	Icon        string // empty for the target's own icon
 }
 
 // comObject calls methods on a COM interface pointer through its vtable.
 type comObject struct{ ptr unsafe.Pointer }
 
+// COM writes through these addresses, so an argument that points at a variable must be
+// converted to uintptr in the call to this function itself. The directive below then
+// keeps that variable in place, as it does for syscall's Proc.Call. Without it, a
+// variable on the goroutine's stack can move first, and COM writes to freed memory.
+//
+//go:uintptrescapes
 func (o comObject) call(slot int, args ...uintptr) error {
 	vtable := *(*unsafe.Pointer)(o.ptr)
 	method := *(*uintptr)(unsafe.Add(vtable, uintptr(slot)*unsafe.Sizeof(uintptr(0))))
@@ -140,6 +153,11 @@ func Create(path string, l Link) error {
 				return err
 			}
 		}
+		if l.Icon != "" {
+			if err := setIcon(link, l.Icon); err != nil {
+				return err
+			}
+		}
 		p, err := syscall.UTF16PtrFromString(path)
 		if err != nil {
 			return err
@@ -163,29 +181,99 @@ func Read(path string) (Link, error) {
 		if err := file.call(slotPersistLoad, uintptr(unsafe.Pointer(p)), stgmRead); err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
+		// Each address is converted in the call itself (see comObject.call).
 		buf := make([]uint16, maxText)
-		get := func(slot int, extra ...uintptr) (string, error) {
-			buf[0] = 0
-			args := append([]uintptr{uintptr(unsafe.Pointer(&buf[0])), maxText}, extra...)
-			if err := link.call(slot, args...); err != nil {
-				return "", err
-			}
-			return syscall.UTF16ToString(buf), nil
-		}
-		if l.Target, err = get(slotGetPath, 0, 0); err != nil {
+		text := func() string { return syscall.UTF16ToString(buf) }
+		buf[0] = 0
+		if err := link.call(slotGetPath, uintptr(unsafe.Pointer(&buf[0])), maxText, 0, 0); err != nil {
 			return err
 		}
-		if l.Arguments, err = get(slotGetArguments); err != nil {
+		l.Target = text()
+		buf[0] = 0
+		if err := link.call(slotGetArguments, uintptr(unsafe.Pointer(&buf[0])), maxText); err != nil {
 			return err
 		}
-		l.Description, err = get(slotGetDescription)
-		return err
+		l.Arguments = text()
+		buf[0] = 0
+		if err := link.call(slotGetDescription, uintptr(unsafe.Pointer(&buf[0])), maxText); err != nil {
+			return err
+		}
+		l.Description = text()
+		buf[0] = 0
+		var iconIndex int32
+		if err := link.call(slotGetIconLocation, uintptr(unsafe.Pointer(&buf[0])), maxText, uintptr(unsafe.Pointer(&iconIndex))); err != nil {
+			return err
+		}
+		l.Icon = text()
+		return nil
 	})
 	return l, err
 }
 
+// Arguments is what a stub passes to ephgetw. It carries the app's settings, so a
+// stub can rebuild a lost state entry.
+func Arguments(id, ttl string, keepPrefs bool, pinVersion string) string {
+	prefs := "--no-keep-prefs"
+	if keepPrefs {
+		prefs = "--keep-prefs"
+	}
+	args := fmt.Sprintf("run %s --ttl %s %s", id, ttl, prefs)
+	if pinVersion != "" {
+		args += " --pin " + pinVersion
+	}
+	return args
+}
+
+// SetArguments changes only a shortcut's arguments, leaving its icon and anything
+// else as it is.
+func SetArguments(path, arguments string) error {
+	return modify(path, func(link comObject) error { return setText(link, slotSetArguments, arguments) })
+}
+
+// SetIcon changes only a shortcut's icon, and tells Explorer to show the new one.
+func SetIcon(path, icon string) error {
+	if err := modify(path, func(link comObject) error { return setIcon(link, icon) }); err != nil {
+		return err
+	}
+	if p, err := syscall.UTF16PtrFromString(path); err == nil {
+		procSHChangeNotify.Call(shcneUpdateItem, shcnfPath, uintptr(unsafe.Pointer(p)), 0)
+	}
+	return nil
+}
+
+func setIcon(link comObject, icon string) error {
+	p, err := syscall.UTF16PtrFromString(icon)
+	if err != nil {
+		return err
+	}
+	return link.call(slotSetIconLocation, uintptr(unsafe.Pointer(p)), 0)
+}
+
+func modify(path string, change func(link comObject) error) error {
+	return withLink(func(link, file comObject) error {
+		p, err := syscall.UTF16PtrFromString(path)
+		if err != nil {
+			return err
+		}
+		if err := file.call(slotPersistLoad, uintptr(unsafe.Pointer(p)), stgmReadWrite); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if err := change(link); err != nil {
+			return err
+		}
+		const remember = 1
+		if err := file.call(slotPersistSave, uintptr(unsafe.Pointer(p)), remember); err != nil {
+			return fmt.Errorf("save %s: %w", path, err)
+		}
+		return nil
+	})
+}
+
 // Marker is the description that identifies an app's stub (section 7, Finding stubs).
-func Marker(id string) string { return "ephget:" + id }
+func Marker(id string) string { return MarkerPrefix + id }
+
+// MarkerPrefix starts the description of every ephget stub.
+const MarkerPrefix = "ephget:"
 
 // IsStubOf reports whether a shortcut is this app's stub.
 func IsStubOf(l Link, id string) bool { return strings.EqualFold(l.Description, Marker(id)) }
@@ -193,7 +281,17 @@ func IsStubOf(l Link, id string) bool { return strings.EqualFold(l.Description, 
 // Find returns every .lnk under folders that is this app's stub. Folders it can't
 // read, and shortcuts it can't open, are skipped: the search is best-effort.
 func Find(id string, folders []string) []string {
+	return findWhere(folders, func(l Link) bool { return IsStubOf(l, id) })
+}
+
+// FindAny returns every ephget stub under folders, whatever the app.
+func FindAny(folders []string) []string {
+	return findWhere(folders, func(l Link) bool { return strings.HasPrefix(l.Description, MarkerPrefix) })
+}
+
+func findWhere(folders []string, match func(Link) bool) []string {
 	var found []string
+	seen := map[string]bool{}
 	for _, folder := range folders {
 		filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -203,7 +301,8 @@ func Find(id string, folders []string) []string {
 				return nil
 			}
 			if d.Type().IsRegular() && strings.EqualFold(filepath.Ext(path), ".lnk") {
-				if link, err := Read(path); err == nil && IsStubOf(link, id) {
+				if link, err := Read(path); err == nil && match(link) && !seen[strings.ToLower(path)] {
+					seen[strings.ToLower(path)] = true
 					found = append(found, path)
 				}
 			}

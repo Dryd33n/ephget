@@ -1,6 +1,7 @@
 package shortcut
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,45 @@ func TestFindMatchesMarkerOnly(t *testing.T) {
 	got := Find("vlc", []string{dir, filepath.Join(dir, "missing")})
 	if len(got) != 1 || !strings.EqualFold(got[0], mine) {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// growStack calls fn from a chosen depth. A new goroutine has a small stack, so
+// the calls fn makes will outgrow it and move it at different points.
+//
+//go:noinline
+func growStack(depth int, fn func()) {
+	var pad [64]byte
+	if depth > 0 {
+		growStack(depth-1, fn)
+		pad[0]++
+		return
+	}
+	fn()
+}
+
+// COM writes into buffers through raw addresses. If one of those buffers lived on a
+// goroutine's stack and the stack moved first, COM would write to freed memory, so
+// this reads a shortcut from stacks in many different states.
+func TestReadSurvivesStackMoves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "App.lnk")
+	want := Link{Target: os.Args[0], Arguments: "run app --ttl 7d --keep-prefs", Description: Marker("app"), Icon: filepath.Join(dir, "app.ico")}
+	if err := Create(path, want); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 600 {
+		done := make(chan error, 1)
+		go growStack(i%400, func() {
+			link, err := Read(path)
+			if err == nil && (link.Arguments != want.Arguments || link.Description != want.Description || !strings.EqualFold(link.Icon, want.Icon)) {
+				err = fmt.Errorf("read %+v", link)
+			}
+			done <- err
+		})
+		if err := <-done; err != nil {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
 	}
 }
 

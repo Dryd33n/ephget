@@ -1,6 +1,7 @@
 package reap
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	layout := paths.Layout{Home: t.TempDir()}
+	t.Setenv("EPHGET_HOME", layout.Home) // keeps scans out of the real folders and registry
 	return &fixture{layout: layout, store: state.Store{Path: layout.State()}, stubs: t.TempDir()}
 }
 
@@ -63,6 +65,21 @@ func (f *fixture) hasEntry(t *testing.T, id string) bool {
 		t.Fatal(err)
 	}
 	return st[id] != nil
+}
+
+func jsonString(s string) string {
+	data, _ := json.Marshal(s)
+	return string(data)
+}
+
+// lockApp holds an app's fetch lock until the returned function is called.
+func lockApp(t *testing.T, f *fixture, id string) func() {
+	t.Helper()
+	lock, err := lockfile.Acquire(f.layout.FetchLock(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lock.Release
 }
 
 func gone(t *testing.T, path string) {

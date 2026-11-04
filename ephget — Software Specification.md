@@ -51,7 +51,7 @@ Users interact with ephget through a small CLI and through the desktop shortcuts
 
 ### Installation
 
-There is no separate setup step. Installing ephget (a one-line PowerShell installer, or later a WinGet package) copies `ephget.exe` and `ephgetw.exe` to `%LOCALAPPDATA%\ephget\`, adds that folder to the user `PATH`, and registers the `ephget-reap` scheduled task. Every CLI command also checks that the task exists and re-registers it if missing, so a deleted task heals itself.
+There is no separate setup step. Installing ephget (a one-line PowerShell installer, or later a WinGet package) copies `ephget.exe` and `ephgetw.exe` to `%LOCALAPPDATA%\ephget\`, adds that folder to the user `PATH`, and registers the `ephget-reap` scheduled task. Every CLI command also checks that the task exists and runs this copy of `ephgetw.exe`, and re-registers it if not, so a deleted or out-of-date task heals itself.
 
 ### Commands
 
@@ -158,14 +158,14 @@ stateDiagram-v2
 1. User runs `ephget remove <id>`. It needs no network and works for an app that has left the catalog.
 2. ephget moves `apps\<id>\` aside to `tmp\`. If that fails, the app is open: it says so and changes nothing. It also refuses while the app is downloading.
 3. The app's stubs are deleted: its recorded paths, and any others the scan finds (Finding stubs). Only `.lnk` files with this app's marker are touched. A stub it can't delete is listed for the user.
-4. The files are deleted, along with its settings if keep preferences is off, and the state entry and icon are dropped. Nothing of the app remains.
+4. The files and anything saved in `prefs\<id>\` are deleted, along with its settings outside the app folder if keep preferences is off, and the state entry and icon are dropped.
 
-Deleting the shortcuts by hand also works. On the next reap pass (within the hour), ephget sees that none of the app's shortcuts exist and treats it as expired immediately, whatever its TTL. Deleting only one of them leaves the app in place.
+Deleting the shortcuts by hand also works. On the next reap pass (within the hour), ephget sees that none of the app's shortcuts exist and removes the app, whatever its TTL. Deleting only one of them leaves the app in place. Missing shortcuts may only have moved somewhere the scan can't see, or be on an unplugged drive, so this doesn't count as a request to lose settings: with keep preferences on, they stay in `prefs\<id>\`, and a shortcut that turns up gets them back on its next click. Only `ephget remove` clears them.
 
 ### F9. Uninstall ephget
 
 1. `ephget uninstall` finds every stub (recorded paths, then a scan) and lists everything that will be removed, then asks for confirmation.
-2. All cached apps, the found stubs, the scheduled task, the PATH entry and the data folder are deleted. Settings outside the data folder follow each app's keep-preferences setting; settings saved in `prefs\` go with the data folder, and the confirmation says so.
+2. All cached apps, the found stubs, the scheduled task, the PATH entry and the data folder are deleted. Settings outside the data folder follow each app's keep-preferences setting; settings saved in `prefs\` go with the data folder, and the confirmation says so. It refuses while any app is open. Only ephget's own files are deleted, so anything else in the folder stays, and so does the folder. A running exe can't delete itself, so a hidden `cmd` deletes the two exes and the folder a few seconds after `ephget` exits.
 3. Stubs that couldn't be found are listed by last known path so the user can delete them. Clicked after uninstall, they show Windows' standard "missing target" prompt, since ephgetw.exe is gone.
 
 ### Exception flows
@@ -182,6 +182,8 @@ Deleting the shortcuts by hand also works. On the next reap pass (within the hou
 | Stub clicked with no state entry (moved, then its state was dropped) | Same as a first launch | Rebuilds the state entry from the stub's own arguments (ID, TTL, keep-prefs) |
 | App launched outside the shortcut | Nothing | Not tracked; reaper treats it as just closed whenever it finds it running |
 | PC shuts down with the app open | Nothing | No close time recorded; launch time used as fallback |
+| TTL passes while the app is open | Nothing; `ephget list` shows it as open | The rename fails, so nothing is removed; the TTL counts from the real close |
+| All of an app's stubs moved somewhere a scan can't see | Nothing; the stub keeps working | App removed, settings kept per the toggle; the next click downloads it and restores them |
 
 ## 5. System architecture
 
@@ -211,7 +213,7 @@ The client only talks to the internet to refresh the index and to download an ap
 
 ## 6. Index pipeline (ephget-index)
 
-A scheduled GitHub Action in a separate `ephget-index` repository builds the index once a day and publishes it as a release asset. Clients never read Scoop's buckets directly, apart from the pinned-version fallback (section 7).
+A scheduled GitHub Action in a separate `ephget-index` repository builds the index once a day and publishes it as a release asset. Clients never read Scoop's buckets directly.
 
 ### Source
 
@@ -361,16 +363,18 @@ A cached launch performs no network access and reads no index. While waiting, th
 For each entry in `state.json`:
 
 1. **Check for stubs.** If none of the recorded `shortcuts` exist, scan for the app's `ephget:<id>` marker (Finding stubs) in case the stub was moved but not yet clicked. If a stub is found, update its path; if none is, the user deleted the app: treat it as expired now and go to step 3.
-2. Skip it if `now <= last_closed + ttl`. If `last_closed` is missing (the launcher was killed or the PC shut down with the app open), use `last_launched`.
-3. Try to rename the app folder to `<folder>.reaping`. If the rename fails, the app is running: set `last_closed = now` and skip it.
-4. If `keep_prefs` is on and the user hasn't deleted the app, move each `persist` item that exists out of the renamed folder into `prefs\<id>\`. Delete the renamed folder. If `keep_prefs` is off, also delete each footprint entry that still exists and any `prefs\<id>\`.
+2. Skip it if it isn't cached, or if `now <= last_closed + ttl`. If `last_closed` is missing (the launcher was killed or the PC shut down with the app open), use `last_launched`. If both are missing (downloaded, but it never started), use the app folder's modified time.
+3. If `apps\<id>\` exists, try to rename it to `tmp\<id>.removing`. If the rename fails, the app is running: set `last_closed = now` and skip it. A pass tries once, so an open app can't hold it up.
+4. If `keep_prefs` is on, move each `persist` item that exists out of the renamed folder into `prefs\<id>\`, even if the stubs are missing. If that fails, put the folder back and try again next pass. Delete the renamed folder. If `keep_prefs` is off, also delete each footprint entry that still exists and any `prefs\<id>\`.
 5. If the app was deleted by the user, drop the state entry and its icon. Otherwise keep the entry, minus the cache path, so the stub stays ready to relaunch.
+
+An app whose download is in progress is skipped. Each pass also finishes deleting any `tmp\*.removing` folder that a crash left behind. A reap never shows a dialog; a failure appears as the scheduled task's last result.
 
 The marker scan only runs when every recorded path is missing, which is rare, so the hourly pass normally stays a plain file read.
 
 **Triggers:** the `ephget-reap` per-user scheduled task runs at logon and hourly, with "run as soon as possible after a missed start", so a 1-hour TTL is honoured within about an hour. Each run reads one JSON file and exits. A reap pass also runs after every app closes.
 
-**Load:** each hourly run starts ephgetw.exe, reads a state file of a few KB, compares timestamps and exits. Expect roughly 20–50 ms of CPU and a few MB of memory for that moment, no network, and no disk writes unless something expired: about a second of CPU per day. The task is set not to wake the PC and to run only while the user is logged on. These are estimates to confirm with a benchmark in M3.
+**Load:** each hourly run starts ephgetw.exe, reads a state file of a few KB, compares timestamps and exits. Measured with 30 cached apps and a 12.6 KB state file: about 12 ms in total, CPU below the timer's 16 ms resolution, 5.4 MB of memory, no network, and no disk writes unless something expired. That is well under a second of CPU per day. The task is set not to wake the PC and to run only while the user is logged on.
 
 ### Settings footprint
 
@@ -380,10 +384,12 @@ For settings outside the app folder, ephget detects where an app keeps them by c
 
 1. Before the first launch, record the names of the top-level entries in `%APPDATA%`, `%LOCALAPPDATA%` and `HKCU\Software`, plus one level under each `HKCU\Software\<vendor>` key.
 2. After the app closes, list them again. New entries are candidates.
-3. Keep only candidates whose name matches the app's ID or name, which filters out folders other programs created in the same window.
+3. Keep only candidates whose name equals the app's ID or name exactly, ignoring case. Partial matches don't count, and neither do names no single app owns, such as `Microsoft` or `Temp`.
 4. Store the result in the state entry's `footprint`; `ephget list` shows it.
 
-The footprint is always recorded, so the keep-preferences toggle can be changed later. Detection is best-effort: settings written inside an existing shared folder, under an unrelated name, or only on a later run are missed.
+The footprint is always recorded, so the keep-preferences toggle can be changed later. Deleting is the risk here, since a wrong match destroys someone else's data, so detection deliberately misses things: settings written inside an existing shared folder, under another name (Etcher's `balena-etcher`), or only on a later run. Those stay behind, which is harmless. Stored entries are checked again before any delete, because `state.json` can be edited.
+
+A state entry rebuilt from a stub has no footprint and never looks for one: the app may have run before the entry was lost, so its settings wouldn't look new. Such an app leaves its settings behind.
 
 ### Shortcuts and icons
 
@@ -410,9 +416,9 @@ Users can move or copy stubs anywhere, so ephget never relies only on the paths 
 
 A cached app is never updated in place. Whenever an app has to be downloaded (first launch, or after it expired), ephget fetches the latest version in the index by default.
 
-- `--pin` on `add` or `set` freezes the app at the version that is cached, or at the version downloaded next if none is. The stub's arguments gain `--pin <version>`, and the state entry's `pin` field stores that version's number, URL and SHA256. Unpinned apps have no `pin` field.
-- The index only lists latest versions, so a pinned re-download uses the stored URL and hash. If the state entry is gone, ephget looks up that version's manifest in the bucket's Git history on GitHub.
-- If the pinned version's download no longer exists (publishers sometimes remove old files), the console says so and offers to unpin and get the latest.
+- `--pin` on `add` or `set` freezes the app at the version that is cached, or at the catalog's current version if none is. The stub's arguments gain `--pin <version>`, and the state entry's `pin` field stores that version's number, URL, SHA256, file type, exe, `extract_dir` and `rename`. Unpinned apps have no `pin` field.
+- The index only lists latest versions, so a pinned re-download uses what's stored. If the state entry is gone, the version can only come from the index; if the index has moved on, it counts as unavailable. Looking it up in a bucket's Git history would take a lot of network and parsing code for a rare case, so v1 doesn't.
+- If the pinned version can no longer be downloaded (publishers sometimes remove old files), the console says so and offers to unpin and get the latest.
 - `--no-pin` returns the app to latest-on-download.
 
 ## 8. Non-functional requirements
@@ -505,22 +511,24 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 - [x] TTL parsing (hours and days, minimum 1 hour).
 - [x] `ephget remove`: delete an app's stubs, files and state; refuse while it's open or downloading. Footprint and icon removal come with those features in M4.
 - [x] Stub tracking via `STARTF_TITLEISLINKNAME`; marker scan.
-- [ ] Reaper as specified in section 7, including the deleted-shortcut check.
-- [ ] Register the per-user `ephget-reap` task (logon + hourly, no wake); re-register from any CLI command if missing.
-- [ ] Reap pass after each app closes.
-- [ ] `set` and `config` commands.
-- [ ] Benchmark the hourly run's CPU and memory.
+- [x] Reaper as specified in section 7, including the deleted-shortcut check. Footprint deletion comes with M4.
+- [x] Register the per-user `ephget-reap` task (logon + hourly, no wake); re-register from any CLI command if missing.
+- [x] Reap pass after each app closes.
+- [x] `set` and `config` commands. `--pin` comes with M4.
+- [x] Benchmark the hourly run's CPU and memory.
+- [x] Save persist-list items on reap and restore them on the next download, so expiry can't lose settings.
+- [ ] Watch a real scheduled run remove an app, and register the task as a true standard user.
 
 **Done when:** an app with a 1-hour TTL is removed within about 2 hours of closing; deleting its shortcut removes it within an hour; a running app is never removed.
 
 ### M4 — Preferences and polish
 
-- [ ] Settings footprint: snapshot before first launch, diff after close, name matching.
-- [ ] Keep-preferences toggle: save and restore persist-list items when on; delete the footprint and saved items on reap when off.
-- [ ] Icon extraction and shortcut icon update.
-- [ ] Version pinning (`--pin`, stored URL and hash, fallback to the bucket's Git history).
-- [ ] `uninstall`.
-- [ ] Every exception flow in section 4.
+- [x] Settings footprint: snapshot before first launch, diff after close, exact name matching.
+- [x] Keep-preferences toggle: delete the footprint on reap when off. Saved items are already handled (M3).
+- [x] Icon extraction and shortcut icon update.
+- [x] Version pinning (`--pin`, stored install details, no Git history fallback).
+- [x] `uninstall`.
+- [ ] Every exception flow in section 4. All have code. Closing the console mid-download still needs trying by hand: the test couldn't reach a console window on this machine.
 
 **Done when:** every flow in section 4 behaves as written.
 

@@ -38,6 +38,12 @@ func (l Layout) FetchLock(id string) string { return filepath.Join(l.Tmp(), id+"
 // AppRoot holds every version of an app.
 func (l Layout) AppRoot(id string) string { return filepath.Join(l.Home, "apps", id) }
 
+// Icon is an app's extracted icon, which outlives its cached copy.
+func (l Layout) Icon(id string) string { return filepath.Join(l.Home, "icons", id+".ico") }
+
+// Prefs holds an app's persist-list items while it isn't cached.
+func (l Layout) Prefs(id string) string { return filepath.Join(l.Home, "prefs", id) }
+
 // Removing is where an app's folder goes while it is deleted. It is on the same
 // volume as AppRoot, so moving the folder there is a rename, which fails if the
 // app is running.
@@ -65,6 +71,17 @@ func reservedDevice(name string) bool {
 		return true
 	}
 	return false
+}
+
+// SafeItems keeps the persist items that are safe to join to an app's folder.
+func SafeItems(items []string) []string {
+	var safe []string
+	for _, item := range items {
+		if SafeRelative(item) {
+			safe = append(safe, item)
+		}
+	}
+	return safe
 }
 
 // SafeRelative reports whether p, which may use either slash, stays inside the

@@ -24,7 +24,15 @@ M0 survey is done. M1's indexer is live: the workflow has run by hand on GitHub,
 
 M2's code is written and passes its tests, but M2 isn't done: the sample test and the clean-machine check need a Windows VM. The user ran one real app themselves on this machine: Etcher downloaded, opened and recorded its close, using the default Desktop and Start Menu folders. Their copy of ephget's data is in `%LOCALAPPDATA%\ephget`. The same session found `fysty`, the catalog's PuTTY, returns a 404: its manifest's URL is dead, and neither the indexer nor `add` checks for that. The only VM on this machine is a Debian one in VirtualBox, and Windows 11 Home has no Windows Sandbox. End-to-end tests run the real executables and click a real stub, with `internal/testapp` standing in for the app.
 
-**Next: finish M2 in a Windows VM, then M3 (spec sections 7 and 10).** In the VM, copy `dist/ephget.exe` and `dist/ephgetw.exe` to one folder, then:
+M3's code is written and passes its tests: the reaper, the scheduled task, `set`, `config`, and saving persist items. Two boxes remain: no real scheduled run has removed an app yet, and task registration has only run with Administrators filtered from the token (`runas /trustlevel:0x20000`), not as a true standard user.
+
+**The next real `ephget` command, with no `EPHGET_HOME`, registers the real `ephget-reap` task pointing at `dist\ephgetw.exe`.** From then on, apps in `%LOCALAPPDATA%\ephget` really expire.
+
+Measured for an idle reap with 30 apps: about 12 ms in total, CPU below the timer's 16 ms resolution, 5.4 MB. Each typed command adds a `schtasks` query of about 41 ms.
+
+M4's code is written and passes its tests: icons, footprint, pinning, `uninstall`, and shortcuts that vanish keeping their settings. No real app has gone through any of it, and `uninstall`'s PATH and real-task steps have never run, because tests set `EPHGET_HOME`.
+
+**Next: finish M2, M3 and M4 in a Windows VM, then M5 (spec section 10).** In the VM, copy `dist/ephget.exe` and `dist/ephgetw.exe` to one folder, then:
 
 1. Check the "Done when" line in M2: `ephget search`, `ephget add`, click the Desktop shortcut, then click it again offline.
 2. Add and open each app in the sample below, and note which fail. All 32 have already downloaded, verified and extracted without errors on this machine, with nothing run. The first 10 use `rename`, the rest had a script skipped.
@@ -33,9 +41,14 @@ M2's code is written and passes its tests, but M2 isn't done: the sample test an
 7tsp bandizip bitwarden clash.mini featherwallet ft2-clone neoray scummvm serial-cloner sumatrapdf workshopdl jpegview-fork netch pcsx2-dev simple-assembly-explorer shutup10 accesser keyboard-chatter-blocker openfreebuds aegisub ventoy speedcrunch throne tsip antimicrox obs-studio sourcegit azahar volume2 http-downloader wizfile musicplayer2
 ```
 
-Also untested: the UAC path for exes that demand admin rights (`startElevated`), and closing the console during a download. A killed run's `tmp\` is cleared by the next fetch, and that is tested.
+3. Close the download console mid-download of a large app: `tmp\<id>\` should go and the app should stay a stub. A test couldn't reach a console window on this machine: with `conhost`, the window can't be found by title or by owner.
+4. Run a real `ephget uninstall` from an installed copy, and check the task, PATH entry and folder are gone. Check Defender's reaction to its hidden `cmd`.
+5. Register the task as a true standard user, and watch a real hourly run remove an app.
+6. Look at a real app's shortcut icon, and at what its first run puts in `ephget list`.
 
-Measured here with a GUI test app: a cached launch adds about 32 ms over starting the app directly (target 50 ms), and the waiting launcher used no CPU over 8 s at about 7 MB. Sizes are 8.3 MB and 3.0 MB (limit 10 MB).
+Also untested: the UAC path for exes that demand admin rights (`startElevated`). A killed run's `tmp\` is cleared by the next fetch, and that is tested.
+
+Measured here with a GUI test app: a cached launch adds about 32 ms over starting the app directly (target 50 ms), and the waiting launcher used no CPU over 8 s at about 7 MB. Sizes are 8.6 MB and 3.1 MB (limit 10 MB).
 
 M1 has one open box, left unticked in the spec: no scheduled run had happened yet, only manual ones. Once a run with `"event": "schedule"` succeeds, tick it. No login is needed to check:
 
@@ -43,7 +56,9 @@ M1 has one open box, left unticked in the spec: no scheduled run had happened ye
 curl -s "https://api.github.com/repos/Dryd33n/ephget-index/actions/workflows/build-index.yml/runs?event=schedule&per_page=1"
 ```
 
-M2's code is committed as `282ab37`. `ephget remove`, stub tracking and the `Referer` are uncommitted. `CLAUDE.md` is tracked even though `.gitignore` lists it.
+`ephget remove`, stub tracking and the `Referer` are committed as `b8548a1`. M3's and M4's code is uncommitted. `CLAUDE.md` is tracked even though `.gitignore` lists it.
+
+**Defender:** on 2026-11-04 it flagged `dist\ephget.exe` as `Trojan:Win32/Bearfoos.B!ml` (VirusTotal: 1 of 61), which looks like a false positive. Reporting it to Microsoft was recommended; whether that happened is unknown. About two minutes earlier, a test fetch of `systools` had unpacked `ProduKey.exe`, flagged as `HackTool:Win32/ProductKey`. Don't fetch Nirsoft suites or password tools on this machine, and don't change builds to get past the detection. Those 23 apps need a decision in the catalog work; code signing is the real fix.
 
 **Priority:** get the client's main functionality working first; refining the catalog comes later. That covers the catalog problems found on 2026-11-04: about 38 of 1,583 URLs failed even with a `Referer` (26 of them 404s), and nothing checks URLs at index time. Also parked: skipped scripts and Scoop's creation of missing `persist` folders both switch some apps into portable mode, and ephget does neither, so apps like OBS and VLC may keep settings in `%APPDATA%`. Check where settings land during the sample test, not just that the app opens.
 
@@ -55,8 +70,13 @@ The survey stays on branch `m0-survey`, on purpose: the user doesn't want the su
 - **Starting processes:** use `createProcess` in `internal/launch`, not `os/exec`, for the app and the fetch console. `os/exec` always redirects standard handles, which leaves a new console blank and unable to read input.
 - **Test apps:** build `internal/testapp` with `-H=windowsgui` unless a test needs a console. A console build makes Windows open a window for it, which adds about 450 ms to each launch.
 - **`EPHGET_HOME`:** overrides the data folder. Use it for any manual run, so nothing touches a real installation.
-- **Removing apps:** `internal/reap` has no network code, so the M3 reaper can share it with `remove`. Moving the app folder comes first, because that fails while the app runs and nothing has changed yet.
-- **Real folders:** with `EPHGET_HOME` set, `remove` doesn't scan the real Desktop, Start Menu or Documents.
+- **Removing apps:** `internal/reap` holds both `remove` and the reaper. Moving the app folder comes first, because that fails while the app runs and nothing has changed yet.
+- **`EPHGET_HOME` side effects:** with it set, nothing scans the real Desktop, Start Menu or Documents, and no command touches the real scheduled task.
+- **COM calls:** in `internal/shortcut`, an address passed to `comObject.call` must be converted to `uintptr` in that call itself, not stored in a slice or passed through a helper. Otherwise the stack can move first and COM writes to freed memory. `TestReadSurvivesStackMoves` catches this, and failed every run before the fix.
+- **Footprint safety:** matches must equal the app's ID or name exactly, and `footprint.Delete` rechecks every entry. Don't loosen either: a miss leaves harmless files, while a wrong match deletes someone's data.
+- **Settings:** only `ephget remove` may lose settings kept with keep preferences on. Missing stubs may only have moved.
+- **`os/exec`:** its redirected handles also break `conhost`, so tests that need a real console must use `CreateProcess`.
+- **`persist` paths:** they come from the unsigned index, so pass them through `paths.SafeItems` before joining them to a folder.
 - **Hash file:** the client doesn't read `index.json.gz.sha256`. The release's files are replaced one at a time, so the pair can briefly disagree during a publish, and gzip's own checksum and a JSON parse already catch damage.
 - **Sample test:** if an app breaks because of a skipped script, fix the classifier in `ephget-index/build_index.py` and add a test. Any change to that file causes a full parse on the next run.
 - **Publishing a fix:** merge to `ephget-index` `main` and start the workflow from the Actions tab. Take a fresh screenshot before each click in the browser, because the page navigates after a run starts.
@@ -82,14 +102,9 @@ git clone --depth 1 --no-checkout --single-branch https://github.com/ScoopInstal
 
 ## Open spec problems
 
-Not yet fixed in the spec; deal with them in M3 and M4:
+Not yet fixed in the spec:
 
-- **Reaper:** step 3 treats a failed rename as "app is running", but the rename also fails when the folder doesn't exist. A deleted shortcut for an uncached app never has its state dropped, and uncached entries get a `last_closed` write every hour. `reap.Remove` already checks that the folder exists first. The spec also doesn't say what happens to an entry with neither timestamp, or who cleans up a `.reaping` folder left by a crash.
-- **`ephgetw` errors:** it shows a message box on any error, which the hourly reap must not do.
-- **Tests:** anything using `EPHGET_HOME` must not register the real scheduled task.
-- **`uninstall`:** it has to delete its own running exe, and the spec has no plan for that.
-- **`persist`:** the client's `validate` doesn't check these paths yet, and must before M4 uses them.
-- **Rebuilt state entries:** a rebuilt entry has no footprint and may count as a first run, so the comparison finds nothing new and settings cleanup silently stops.
+None at the moment.
 
 ## Working here
 

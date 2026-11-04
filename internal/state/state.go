@@ -17,15 +17,23 @@ import (
 )
 
 // Pin is a frozen version (section 7, Versions and updates).
+//
+// The index only lists latest versions, so this holds all it takes to install this
+// one without it.
 type Pin struct {
-	Version string `json:"version"`
-	URL     string `json:"url"`
-	SHA256  string `json:"sha256"`
+	Version    string   `json:"version"`
+	URL        string   `json:"url"`
+	SHA256     string   `json:"sha256"`
+	Type       string   `json:"type"`
+	Exe        string   `json:"exe"`
+	ExtractDir string   `json:"extract_dir,omitempty"`
+	Rename     []string `json:"rename,omitempty"`
 }
 
 // Entry is one app's state. Path, and the fields describing the cached copy,
 // are empty until the app has been downloaded.
 type Entry struct {
+	Name         string     `json:"name,omitempty"`
 	Bucket       string     `json:"bucket,omitempty"`
 	Version      string     `json:"version,omitempty"`
 	Path         string     `json:"path,omitempty"`
@@ -36,8 +44,12 @@ type Entry struct {
 	TTL          string     `json:"ttl"`
 	KeepPrefs    bool       `json:"keep_prefs"`
 	Pin          *Pin       `json:"pin,omitempty"`
-	Shortcuts    []string   `json:"shortcuts,omitempty"`
-	Footprint    []string   `json:"footprint,omitempty"`
+	// Source is what the cached copy was installed from, which `--pin` freezes.
+	Source    *Pin     `json:"source,omitempty"`
+	Shortcuts []string `json:"shortcuts,omitempty"`
+	Footprint []string `json:"footprint,omitempty"`
+	// FootprintChecked means the first-run comparison has already happened, or can't.
+	FootprintChecked bool `json:"footprint_checked,omitempty"`
 }
 
 // AddShortcut records path unless it is already known.

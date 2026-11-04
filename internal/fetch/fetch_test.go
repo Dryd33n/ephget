@@ -21,6 +21,7 @@ import (
 
 	"github.com/Dryd33n/ephget/internal/index"
 	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
 )
 
@@ -170,6 +171,167 @@ func TestFetchSendsReferer(t *testing.T) {
 	}
 	if got := referer.Load(); got != srv.URL+"/files/" {
 		t.Fatalf("Referer %v", got)
+	}
+}
+
+func TestFetchRestoresSavedSettings(t *testing.T) {
+	data := zipOf(t, map[string]string{"tool.exe": "EXE", "data/default.txt": "shipped", "settings.ini": "shipped"})
+	in := index.Installer{Type: "zip", URL: "/tool.zip", SHA256: sum(data), Exe: "tool.exe"}
+	f := newFixture(t, pkg("tool", in))
+	f.files["/tool.zip"] = data
+	saved := f.c.Layout.Prefs("tool")
+	if err := os.MkdirAll(filepath.Join(saved, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(saved, "data", "mine.txt"), []byte("mine"), 0o666)
+	os.WriteFile(filepath.Join(saved, "settings.ini"), []byte("mine"), 0o666)
+	store := state.Store{Path: f.c.Layout.State()}
+	store.Update(func(st state.State) error {
+		// settings.ini was on the old version's list; pkg only lists "data".
+		st["tool"] = &state.Entry{TTL: "7d", Persist: []string{"settings.ini"}}
+		return nil
+	})
+	if err := f.c.Fetch(context.Background(), "tool"); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(f.c.Layout.Home, paths.AppRel("tool", "1.2"))
+	if got, _ := os.ReadFile(filepath.Join(app, "data", "mine.txt")); string(got) != "mine" {
+		t.Errorf("saved folder not restored: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(app, "data", "default.txt")); err == nil {
+		t.Error("the saved folder should replace the shipped one")
+	}
+	if got, _ := os.ReadFile(filepath.Join(app, "settings.ini")); string(got) != "mine" {
+		t.Errorf("settings.ini not restored: %q", got)
+	}
+	if _, err := os.Stat(saved); err == nil {
+		t.Error("prefs folder left behind")
+	}
+}
+
+// A failed download must not lose settings saved from the last copy.
+func TestFailedFetchKeepsSavedSettings(t *testing.T) {
+	data := zipOf(t, map[string]string{"tool.exe": "EXE"})
+	f := newFixture(t, pkg("tool", index.Installer{Type: "zip", URL: "/tool.zip", SHA256: strings.Repeat("0", 64), Exe: "tool.exe"}))
+	f.files["/tool.zip"] = data
+	saved := filepath.Join(f.c.Layout.Prefs("tool"), "data")
+	if err := os.MkdirAll(saved, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.c.Fetch(context.Background(), "tool"); err == nil {
+		t.Fatal("fetch succeeded")
+	}
+	if _, err := os.Stat(saved); err != nil {
+		t.Errorf("settings lost: %v", err)
+	}
+}
+
+// A reaped app's old times must not make the new copy look overdue.
+func TestFetchRestartsTheAppsClock(t *testing.T) {
+	data := []byte("EXE")
+	f := newFixture(t, pkg("tool", index.Installer{Type: "exe", URL: "/tool.exe", SHA256: sum(data), Exe: "tool.exe"}))
+	f.files["/tool.exe"] = data
+	store := state.Store{Path: f.c.Layout.State()}
+	old := time.Now().Add(-1000 * time.Hour)
+	store.Update(func(st state.State) error {
+		st["tool"] = &state.Entry{TTL: "1h", LastClosed: &old, LastLaunched: &old}
+		return nil
+	})
+	if err := f.c.Fetch(context.Background(), "tool"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Read()
+	if st["tool"].LastClosed != nil || st["tool"].LastLaunched != nil {
+		t.Fatalf("%+v", st["tool"])
+	}
+}
+
+func TestFetchGivesStubsTheAppsIcon(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(os.Getenv("WINDIR"), "explorer.exe")) // only read, as bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, pkg("tool", index.Installer{Type: "exe", URL: "/tool.exe", SHA256: sum(data), Exe: "tool.exe"}))
+	f.files["/tool.exe"] = data
+	stub := filepath.Join(t.TempDir(), "Tool.lnk")
+	if err := shortcut.Create(stub, shortcut.Link{Target: os.Args[0], Description: shortcut.Marker("tool")}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(t.TempDir(), "Theirs.lnk")
+	if err := shortcut.Create(foreign, shortcut.Link{Target: os.Args[0], Description: "theirs"}); err != nil {
+		t.Fatal(err)
+	}
+	store := state.Store{Path: f.c.Layout.State()}
+	store.Update(func(st state.State) error {
+		st["tool"] = &state.Entry{TTL: "7d", Shortcuts: []string{stub, foreign}}
+		return nil
+	})
+	if err := f.c.Fetch(context.Background(), "tool"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.c.Layout.Icon("tool")); err != nil {
+		t.Fatal(err)
+	}
+	link, err := shortcut.Read(stub)
+	if err != nil || !strings.EqualFold(link.Icon, f.c.Layout.Icon("tool")) {
+		t.Fatalf("stub %+v, %v", link, err)
+	}
+	if link, _ := shortcut.Read(foreign); link.Icon != "" {
+		t.Fatalf("someone else's shortcut changed: %+v", link)
+	}
+}
+
+func TestPinnedAppInstallsItsStoredVersion(t *testing.T) {
+	old := zipOf(t, map[string]string{"tool.exe": "OLD"})
+	latest := zipOf(t, map[string]string{"tool.exe": "NEW"})
+	f := newFixture(t, pkg("tool", index.Installer{Type: "zip", URL: "/new.zip", SHA256: sum(latest), Exe: "tool.exe"}))
+	f.files["/old.zip"], f.files["/new.zip"] = old, latest
+	store := state.Store{Path: f.c.Layout.State()}
+	store.Update(func(st state.State) error {
+		st["tool"] = &state.Entry{TTL: "7d", Pin: &state.Pin{Version: "1.0", URL: f.srv.URL + "/old.zip", SHA256: sum(old), Type: "zip", Exe: "tool.exe"}}
+		return nil
+	})
+	if err := f.c.Fetch(context.Background(), "tool"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Read()
+	if e := st["tool"]; e.Version != "1.0" || e.Pin == nil || e.Source == nil || e.Source.Version != "1.0" {
+		t.Fatalf("%+v", e)
+	}
+	got, _ := os.ReadFile(filepath.Join(f.c.Layout.Home, paths.AppRel("tool", "1.0"), "tool.exe"))
+	if string(got) != "OLD" {
+		t.Fatalf("installed %q", got)
+	}
+}
+
+func TestPinnedDownloadThatIsGoneIsReportedAsSuch(t *testing.T) {
+	f := newFixture(t)
+	store := state.Store{Path: f.c.Layout.State()}
+	store.Update(func(st state.State) error {
+		st["tool"] = &state.Entry{TTL: "7d", Pin: &state.Pin{Version: "1.0", URL: f.srv.URL + "/gone.zip", SHA256: strings.Repeat("a", 64), Type: "zip", Exe: "tool.exe"}}
+		return nil
+	})
+	var unavailable *PinUnavailableError
+	if err := f.c.Fetch(context.Background(), "tool"); !errors.As(err, &unavailable) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// With state lost, a stub's pin can only be met if the index still has that version.
+func TestStubPinWithoutState(t *testing.T) {
+	data := zipOf(t, map[string]string{"tool.exe": "EXE"})
+	f := newFixture(t, pkg("tool", index.Installer{Type: "zip", URL: "/tool.zip", SHA256: sum(data), Exe: "tool.exe"}))
+	f.files["/tool.zip"] = data
+	var unavailable *PinUnavailableError
+	if err := f.c.FetchPinned(context.Background(), "tool", "0.9"); !errors.As(err, &unavailable) {
+		t.Fatalf("old version: got %v", err)
+	}
+	if err := f.c.FetchPinned(context.Background(), "tool", "1.2"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := state.Store{Path: f.c.Layout.State()}.Read()
+	if p := st["tool"].Pin; p == nil || p.Version != "1.2" {
+		t.Fatalf("pin %+v", p)
 	}
 }
 

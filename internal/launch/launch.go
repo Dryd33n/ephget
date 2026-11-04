@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/Dryd33n/ephget/internal/config"
+	"github.com/Dryd33n/ephget/internal/footprint"
 	"github.com/Dryd33n/ephget/internal/lockfile"
 	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/reap"
 	"github.com/Dryd33n/ephget/internal/state"
 	"github.com/Dryd33n/ephget/internal/ttl"
 )
@@ -27,6 +29,7 @@ var ErrFetchFailed = errors.New("the app was not downloaded")
 type Options struct {
 	TTL       string
 	KeepPrefs *bool
+	Pin       string
 }
 
 // Run is `ephgetw run <id>`: it downloads the app if needed, starts it, and
@@ -56,7 +59,7 @@ func Run(layout paths.Layout, id string, opts Options) error {
 		if err := setTimes(store, id, track); err != nil {
 			return err
 		}
-		if err := download(layout, id); err != nil {
+		if err := download(layout, id, opts.Pin); err != nil {
 			return err
 		}
 		st, err := store.Read()
@@ -67,6 +70,14 @@ func Run(layout paths.Layout, id string, opts Options) error {
 		if !entry.Cached(layout.Home) {
 			return ErrFetchFailed
 		}
+	}
+
+	// Only a first run pays for this, and a cached launch never does.
+	scope := footprint.Current()
+	firstRun := !entry.FootprintChecked
+	var before footprint.Snapshot
+	if firstRun {
+		before = scope.Take()
 	}
 
 	// The app starts before the state write, which is the slow part of a launch.
@@ -91,9 +102,22 @@ func Run(layout paths.Layout, id string, opts Options) error {
 	}
 	waitErr := WaitForFolder(appDir)
 	closed := time.Now().UTC()
-	if err := setTimes(store, id, func(e *state.Entry) { e.LastClosed = &closed }); err != nil {
+	var found []string
+	if firstRun {
+		found = scope.Find(before, []string{id, entry.Name})
+	}
+	err = setTimes(store, id, func(e *state.Entry) {
+		e.LastClosed = &closed
+		if firstRun {
+			e.Footprint, e.FootprintChecked = found, true
+		}
+	})
+	if err != nil {
 		return err
 	}
+	// The user just closed an app and has nothing to act on if this fails, and the
+	// hourly task will run another pass.
+	reap.Pass(layout, closed)
 	return waitErr
 }
 
@@ -111,7 +135,10 @@ func ensureEntry(layout paths.Layout, store state.Store, id string, opts Options
 	if err != nil {
 		return nil, err
 	}
-	rebuilt := &state.Entry{TTL: cfg.TTL, KeepPrefs: cfg.KeepPrefs}
+	// The app may have run before this entry was lost, and its settings would then
+	// look old rather than new. A comparison would find nothing and claim it had
+	// looked, so this entry simply has no footprint: it leaves settings behind.
+	rebuilt := &state.Entry{TTL: cfg.TTL, KeepPrefs: cfg.KeepPrefs, FootprintChecked: true}
 	if opts.TTL != "" {
 		rebuilt.TTL = opts.TTL
 	}
@@ -131,7 +158,7 @@ func ensureEntry(layout paths.Layout, store state.Store, id string, opts Options
 
 // download waits for a fetch already running for this app, or starts one in a new
 // console and waits for that.
-func download(layout paths.Layout, id string) error {
+func download(layout paths.Layout, id, pin string) error {
 	if err := os.MkdirAll(layout.Tmp(), 0o755); err != nil {
 		return err
 	}
@@ -153,7 +180,11 @@ func download(layout paths.Layout, id string) error {
 	if err != nil {
 		return err
 	}
-	code, err := runInNewConsole(filepath.Join(filepath.Dir(self), "ephget.exe"), "fetch", id)
+	args := []string{"fetch", id}
+	if pin != "" {
+		args = append(args, "--pin", pin)
+	}
+	code, err := runInNewConsole(filepath.Join(filepath.Dir(self), "ephget.exe"), args...)
 	if err != nil {
 		return fmt.Errorf("couldn't start the download: %w", err)
 	}

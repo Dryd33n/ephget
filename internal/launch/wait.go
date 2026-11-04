@@ -34,18 +34,9 @@ var (
 // outlives its parent is still found: it exists before its parent exits, and the
 // parent's exit wakes this loop to look again.
 func WaitForFolder(dir string) error {
-	canon, err := filepath.EvalSymlinks(dir)
+	s, err := newScanner(dir)
 	if err != nil {
 		return err
-	}
-	abs, err := filepath.Abs(canon)
-	if err != nil {
-		return err
-	}
-	s := scanner{
-		prefix:   strings.ToLower(abs) + `\`,
-		deadSeen: map[uint32]bool{},
-		image:    make([]uint16, 32768),
 	}
 	for {
 		result, err := s.scan()
@@ -66,6 +57,39 @@ func WaitForFolder(dir string) error {
 			return err
 		}
 	}
+}
+
+// Running reports whether any process is running an image inside dir, however it
+// was started.
+func Running(dir string) bool {
+	s, err := newScanner(dir)
+	if err != nil {
+		return false
+	}
+	result, err := s.scan()
+	if err != nil {
+		return false
+	}
+	for _, h := range result.handles {
+		syscall.CloseHandle(h)
+	}
+	return len(result.handles) > 0 || result.blind
+}
+
+func newScanner(dir string) (*scanner, error) {
+	canon, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(canon)
+	if err != nil {
+		return nil, err
+	}
+	return &scanner{
+		prefix:   strings.ToLower(abs) + `\`,
+		deadSeen: map[uint32]bool{},
+		image:    make([]uint16, 32768),
+	}, nil
 }
 
 type scanResult struct {

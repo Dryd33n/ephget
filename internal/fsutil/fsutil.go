@@ -40,6 +40,28 @@ func RemoveAll(path string) error {
 	return retry(func() error { return os.RemoveAll(path) })
 }
 
+// MoveItems moves each relative path that exists under from to the same place under
+// to, replacing what is there. from and to must be on one volume.
+func MoveItems(from, to string, items []string) error {
+	for _, item := range items {
+		source := filepath.Join(from, item)
+		if _, err := os.Lstat(source); err != nil {
+			continue
+		}
+		target := filepath.Join(to, item)
+		if err := RemoveAll(target); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := Rename(source, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteAtomic replaces path through a temp file and a rename, so readers see
 // the old content or the new, never part of it.
 func WriteAtomic(path string, data []byte) error {

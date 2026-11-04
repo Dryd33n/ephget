@@ -7,6 +7,8 @@
 //	(empty)   run for TESTAPP_MILLIS and exit
 //	handoff   start a copy of itself, which starts one more, and exit straight away
 //	console   record whether its standard handles reach a real console, then exit
+//
+// TESTAPP_SETTINGS names a folder to create, as an app's settings would be.
 package main
 
 import (
@@ -37,6 +39,9 @@ func isConsole(f *os.File) bool {
 func main() {
 	log("start")
 	defer log("end")
+	if settings := os.Getenv("TESTAPP_SETTINGS"); settings != "" {
+		os.MkdirAll(settings, 0o755)
+	}
 	mode := os.Getenv("TESTAPP_MODE")
 	if mode == "console" {
 		log(fmt.Sprintf("console stdin=%t stdout=%t stderr=%t args=%q",

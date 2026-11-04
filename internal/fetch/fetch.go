@@ -22,9 +22,11 @@ import (
 	"github.com/Dryd33n/ephget/internal/config"
 	"github.com/Dryd33n/ephget/internal/extract"
 	"github.com/Dryd33n/ephget/internal/fsutil"
+	"github.com/Dryd33n/ephget/internal/icon"
 	"github.com/Dryd33n/ephget/internal/index"
 	"github.com/Dryd33n/ephget/internal/lockfile"
 	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
 )
 
@@ -89,6 +91,28 @@ func nativeMachine() (string, error) {
 // Fetch makes sure the app is cached. Another fetch of the same app finishes
 // first, and then this one has nothing left to do.
 func (c *Client) Fetch(ctx context.Context, id string) error {
+	return c.FetchPinned(ctx, id, "")
+}
+
+// PinUnavailableError means a pinned version can no longer be downloaded.
+type PinUnavailableError struct{ ID, Version string }
+
+func (e *PinUnavailableError) Error() string {
+	return fmt.Sprintf("%s %s, the version it is pinned to, can no longer be downloaded", e.ID, e.Version)
+}
+
+type statusError struct {
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string {
+	return "download failed: the server answered " + e.status
+}
+
+// FetchPinned is Fetch for a stub that names a pinned version. If state has lost the
+// pin, the version can only still come from the index, which lists latest versions.
+func (c *Client) FetchPinned(ctx context.Context, id, pinVersion string) error {
 	if !paths.SafeName(id) {
 		return fmt.Errorf("%q is not a valid app ID", id)
 	}
@@ -110,18 +134,11 @@ func (c *Client) Fetch(ctx context.Context, id string) error {
 		return nil
 	}
 
-	idx, err := c.LoadIndex(ctx)
+	pkg, inst, err := c.choose(ctx, id, st[id], pinVersion)
 	if err != nil {
 		return err
 	}
-	pkg := idx.Find(id)
-	if pkg == nil {
-		return fmt.Errorf("%s is no longer in the catalog, so it can't be downloaded", id)
-	}
-	inst, err := pkg.SelectInstaller(c.Machine)
-	if err != nil {
-		return err
-	}
+	pinned := pinVersion != "" || (st[id] != nil && st[id].Pin != nil)
 	if err := validate(pkg, inst); err != nil {
 		return err
 	}
@@ -139,7 +156,10 @@ func (c *Client) Fetch(ctx context.Context, id string) error {
 		// Its state entry was lost but the app is still here. Installs are renamed
 		// into place whole, so this copy is complete.
 		fmt.Fprintf(c.Out, "%s %s is already downloaded.\n", pkg.Name, pkg.Version)
-		return record(store, c.Layout, pkg, inst, rel)
+		if err := restorePrefs(c.Layout, pkg, st[id], dest); err != nil {
+			return err
+		}
+		return c.finish(store, pkg, inst, dest, rel, pinVersion != "")
 	}
 
 	if err := os.MkdirAll(work, 0o755); err != nil {
@@ -148,6 +168,10 @@ func (c *Client) Fetch(ctx context.Context, id string) error {
 	fmt.Fprintf(c.Out, "Downloading %s %s\n%s\n", pkg.Name, pkg.Version, inst.URL)
 	file := filepath.Join(work, "download")
 	if err := c.download(ctx, inst, file); err != nil {
+		var status *statusError
+		if pinned && errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone) {
+			return &PinUnavailableError{pkg.ID, pkg.Version}
+		}
 		return err
 	}
 	fmt.Fprintln(c.Out, "Verified SHA256. Installing...")
@@ -167,7 +191,85 @@ func (c *Client) Fetch(ctx context.Context, id string) error {
 	if err := fsutil.Rename(root, dest); err != nil {
 		return err
 	}
-	return record(store, c.Layout, pkg, inst, rel)
+	if err := restorePrefs(c.Layout, pkg, st[id], dest); err != nil {
+		return err
+	}
+	return c.finish(store, pkg, inst, dest, rel, pinVersion != "")
+}
+
+// choose decides what to install: the pinned version in state, or else the index's.
+func (c *Client) choose(ctx context.Context, id string, e *state.Entry, pinVersion string) (*index.Package, *index.Installer, error) {
+	if e != nil && e.Pin != nil && (pinVersion == "" || pinVersion == e.Pin.Version) {
+		p := e.Pin
+		inst := index.Installer{Type: p.Type, URL: p.URL, SHA256: p.SHA256, Exe: p.Exe, ExtractDir: p.ExtractDir, Rename: p.Rename}
+		name := e.Name
+		if name == "" {
+			name = id
+		}
+		pkg := &index.Package{ID: id, Name: name, Bucket: e.Bucket, Version: p.Version, Persist: e.Persist, Installers: []index.Installer{inst}}
+		return pkg, &pkg.Installers[0], nil
+	}
+	idx, err := c.LoadIndex(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	pkg := idx.Find(id)
+	if pinVersion != "" && (pkg == nil || pkg.Version != pinVersion) {
+		return nil, nil, &PinUnavailableError{id, pinVersion}
+	}
+	if pkg == nil {
+		return nil, nil, fmt.Errorf("%s is no longer in the catalog, so it can't be downloaded", id)
+	}
+	inst, err := pkg.SelectInstaller(c.Machine)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pkg, inst, nil
+}
+
+func pinOf(version string, inst *index.Installer) *state.Pin {
+	return &state.Pin{Version: version, URL: inst.URL, SHA256: inst.SHA256, Type: inst.Type, Exe: inst.Exe,
+		ExtractDir: inst.ExtractDir, Rename: inst.Rename}
+}
+
+// ResolvePin returns what `--pin` should freeze: the cached copy, or else the version
+// that would be downloaded next, which pkg (from the index) gives.
+func ResolvePin(home string, e *state.Entry, pkg *index.Package, machine string) (*state.Pin, error) {
+	if e.Cached(home) && e.Source != nil {
+		frozen := *e.Source
+		return &frozen, nil
+	}
+	if pkg == nil {
+		return nil, errors.New("the app is no longer in the catalog, so it can't be pinned")
+	}
+	if e.Cached(home) && e.Version != pkg.Version {
+		return nil, fmt.Errorf("the cached version %s is no longer in the catalog, so it can't be pinned until the app is downloaded again", e.Version)
+	}
+	inst, err := pkg.SelectInstaller(machine)
+	if err != nil {
+		return nil, err
+	}
+	return pinOf(pkg.Version, inst), nil
+}
+
+// finish records the install and gives the app's stubs its icon. A missing or broken
+// icon isn't worth failing a working app over, so the stub just keeps its old one.
+func (c *Client) finish(store state.Store, pkg *index.Package, inst *index.Installer, dest, rel string, pin bool) error {
+	if err := record(store, c.Layout, pkg, inst, rel, pin); err != nil {
+		return err
+	}
+	file := c.Layout.Icon(pkg.ID)
+	if icon.Extract(filepath.Join(dest, inst.Exe), file) != nil {
+		return nil
+	}
+	if st, err := store.Read(); err == nil && st[pkg.ID] != nil {
+		for _, path := range st[pkg.ID].Shortcuts {
+			if link, err := shortcut.Read(path); err == nil && shortcut.IsStubOf(link, pkg.ID) {
+				shortcut.SetIcon(path, file)
+			}
+		}
+	}
+	return nil
 }
 
 // validate rechecks what the indexer promises, since the index is unsigned and
@@ -277,7 +379,26 @@ func applyRename(root, glob, name string) error {
 	return nil // the exe check that follows reports anything that matters
 }
 
-func record(store state.Store, layout paths.Layout, pkg *index.Package, inst *index.Installer, rel string) error {
+// restorePrefs moves saved settings into the installed app. It runs after the app is
+// in place, so a failed download can't lose them. A failure leaves them saved, and
+// the next attempt finds the app already downloaded and tries again. A new version
+// may have dropped an item from its list, so the old list counts too.
+func restorePrefs(layout paths.Layout, pkg *index.Package, old *state.Entry, dest string) error {
+	saved := layout.Prefs(pkg.ID)
+	if _, err := os.Stat(saved); err != nil {
+		return nil
+	}
+	items := slices.Clone(pkg.Persist)
+	if old != nil {
+		items = append(items, old.Persist...)
+	}
+	if err := fsutil.MoveItems(saved, dest, paths.SafeItems(items)); err != nil {
+		return fmt.Errorf("restore saved settings: %w", err)
+	}
+	return fsutil.RemoveAll(saved)
+}
+
+func record(store state.Store, layout paths.Layout, pkg *index.Package, inst *index.Installer, rel string, pin bool) error {
 	cfg, err := config.Load(layout.Config())
 	if err != nil {
 		return err
@@ -288,11 +409,18 @@ func record(store state.Store, layout paths.Layout, pkg *index.Package, inst *in
 			e = &state.Entry{TTL: cfg.TTL, KeepPrefs: cfg.KeepPrefs}
 			st[pkg.ID] = e
 		}
+		e.Name = pkg.Name
 		e.Bucket = pkg.Bucket
+		e.Source = pinOf(pkg.Version, inst)
+		if pin && e.Pin == nil {
+			e.Pin = pinOf(pkg.Version, inst)
+		}
 		e.Version = pkg.Version
 		e.Path = rel
 		e.Exe = inst.Exe
 		e.Persist = slices.Clone(pkg.Persist)
+		// This copy's clock starts now, not from the session before it was reaped.
+		e.LastLaunched, e.LastClosed = nil, nil
 		return nil
 	})
 }
@@ -338,7 +466,7 @@ func (c *Client) download(ctx context.Context, inst *index.Installer, file strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed: the server answered %s", resp.Status)
+		return &statusError{resp.StatusCode, resp.Status}
 	}
 	out, err := os.Create(file)
 	if err != nil {
