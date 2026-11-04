@@ -213,15 +213,15 @@ A scheduled GitHub Action in a separate `ephget-index` repository builds the ind
 
 - Shallow clones of the `ScoopInstaller` buckets `Main`, `Extras`, `Nirsoft`, `Sysinternals` and `Games`, cached between runs. If two buckets have the same app ID, the first in that order wins.
 - `Versions`, `Nonportable`, `PHP`, `Java` and the nerd-fonts bucket are excluded: they hold old releases, installers, runtimes and fonts rather than current desktop apps.
-- Each run diffs against the previous commit and re-parses only changed manifests; unchanged entries carry over from the previous index.
+- Each run diffs against the previous commit and re-parses only changed manifests; results for unchanged manifests carry over from a state file cached with the clones. A change to the indexer's code, a missing state file or a missing old commit causes a full parse, which takes seconds.
 
 ### Eligibility rules
 
 An app is included if its manifest has an x64, arm64 or architecture-independent build where all of these hold:
 
-1. **GUI app:** the manifest has a `shortcuts` entry, which also gives the exe to launch and the shortcut's name.
+1. **GUI app:** the manifest has a `shortcuts` entry, and the first one gives the exe to launch and the shortcut's name. The target must be an `.exe` inside the app folder, not a `.bat`, `.jar` or document, and must not need arguments. `/accepteula` is the one exception: it's dropped, so a Sysinternals tool shows its EULA once.
 2. **One download:** a single URL, with a SHA256 hash. Manifests with only MD5 or SHA-1 hashes, or none, are excluded.
-3. **Unpackable file:** a `.zip`, a real `.7z`, or an exe that runs as it is. Setup programs are excluded, including exes Scoop opens as 7z (`#/dl.7z`), `innosetup` apps and `.msi` files.
+3. **Unpackable file:** a `.zip`, a real `.7z`, or an exe that runs as it is. Setup programs are excluded, including exes Scoop opens as 7z (`#/dl.7z`), `innosetup` apps and `.msi` files. So are manifests using `extract_to`, or more than one `extract_dir`.
 4. **No dependencies:** the manifest has no `depends` field.
 5. **No script needed:** see below.
 
@@ -232,9 +232,9 @@ An app is included if its manifest has an x64, arm64 or architecture-independent
 | None | Included. |
 | Only prepares settings: creates config files, copies old settings, removes spare files | Skipped; included. |
 | One simple rename of the exe to the launch name | Replaced by the installer's `rename` field; included. |
-| Runs a setup program, unpacks files, starts programs, edits the registry or downloads anything; moves or renames other program files | Excluded. |
+| Runs a setup program, unpacks files, starts programs, edits the registry or downloads anything; moves or renames other program files; an `installer` with no script | Excluded. |
 
-The classification uses keyword matching, so it can misjudge a script. The client checks for the exe after extraction and fails with a clear error if it's missing. Scripts that are skipped can leave different defaults: for example, an app's update check may stay on.
+Moving or copying files out of `<name>.original` folders, the persist folder or user folders counts as preparing settings. Copying a wildcard or an exe or DLL into the app folder counts as moving program files. The classification uses keyword matching, so it can misjudge a script. The client checks for the exe after extraction and fails with a clear error if it's missing. Scripts that are skipped can leave different defaults: for example, an app's update check may stay on.
 
 ### Schema
 
@@ -264,12 +264,16 @@ The `packages` array, one object per app:
 
 `arch` is `x64`, `arm64` or `any`. `type` is `zip`, `7z` or `exe`. `extract_dir` is the folder inside the archive to use as the app's root. `rename` is either null or a `[glob, name]` pair. The example's values are illustrative. Licences and release notes are deliberately left out to keep the index small.
 
+Manifests are untrusted, so the indexer also excludes apps whose `id` or `version` isn't safe as a folder name and any `exe` or `extract_dir` that isn't a literal path inside the app folder, and drops such `persist` items. A `persist` item given as a `[source, target]` pair keeps only the source. `name` is the last part of Scoop's shortcut name (`7-Zip\7-Zip File Manager` becomes `7-Zip File Manager`).
+
+`url` keeps any Scoop `#/name` fragment, which HTTP clients don't send. For `type: exe`, the client saves the download as `exe`: the indexer has checked that this is the name the file would end up with, so `rename` needs no further action there. `extract_dir` is always null for that type.
+
 ### Publishing
 
-- Artifact: `index.json.gz` attached to a rolling `latest` release of `Dryd33n/ephget-index`, plus `index.json.gz.sha256`.
+- Artifact: `index.json.gz` attached to a rolling `latest` release of `Dryd33n/ephget-index`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices.
 - Client URL: `https://github.com/Dryd33n/ephget-index/releases/latest/download/index.json.gz`.
 - Schema version in a top-level wrapper (`{"schema": 1, "generated": "<ISO time>", "packages": [...]}`) so clients can refuse an index format they don't understand.
-- Target size: under 300 KB compressed. A test build in nearly this format, with 1,663 apps, came to about 219 KB.
+- Target size: under 300 KB compressed. The first build, with 1,584 apps, came to about 216 KB. The build fails and publishes nothing if the index is over 300 KB, has fewer than 1,000 apps, or has an entry with no URL, hash or exe path.
 
 ## 7. Client design
 
@@ -335,11 +339,11 @@ Writes go to a temp file followed by an atomic rename, guarded by a lock file, s
 1. Read `state.json`. If the app is cached and its folder exists, go to step 3.
 2. Start `ephget fetch <id>` in a new console window (`CREATE_NEW_CONSOLE`), passing `--pin` if the stub has it, and wait for it to exit. If a fetch for this app is already running, wait for that one instead of starting a second. If the fetch fails or the user closes its window, exit without launching.
 3. If this is the app's first run, snapshot the settings locations (see Settings footprint).
-4. Write `last_launched = now`, start the app with `CreateProcess`, and wait. The wait ends when no process whose image path is inside the app folder is still running, which covers apps that hand off to a child process and exit.
+4. Start the app with `CreateProcess`, then write `last_launched = now` and clear `last_closed`, and wait. An exe that demands admin rights can't start this way, so it goes through `ShellExecuteEx`, which shows its UAC prompt. The wait ends when no process whose image path is inside the app folder is still running, which covers apps that hand off to a child process and exit.
 5. Write `last_closed = now`. On first run, diff the snapshot and store the footprint.
 6. Run a reap pass, then exit.
 
-A cached launch performs no network access and reads no index. While waiting, the launcher blocks on process handles: a few MB of memory and no CPU.
+A cached launch performs no network access and reads no index. While waiting, the launcher blocks on the handles of the app folder's processes and lists them again whenever one exits, so it finds children it didn't start: a few MB of memory and no CPU. A process it can see but not wait on, such as an elevated one, is checked for every 5 seconds instead.
 
 ### Download path (`ephget fetch <id>`)
 
@@ -438,16 +442,16 @@ Lightweight is the primary design constraint: when no ephget app is open, ephget
 
 - **Settings detection is best-effort:** with keep preferences off, settings the footprint missed (shared folders, unrelated names, later runs) stay behind.
 - **Launches that bypass the shortcut** aren't tracked, so `last_closed` isn't updated. The reaper still refreshes it whenever it finds the app running, so the worst case is an early re-download.
-- **Catalog coverage** leaves out apps that need a setup program, an unfixable script or a non-SHA256 hash, including GIMP, 7-Zip, KeePass, Krita, Audacity, CrystalDiskInfo, Firefox and Everything.
+- **Catalog coverage** leaves out apps that need a setup program, an unfixable script or a non-SHA256 hash, including GIMP, 7-Zip, KeePass, Krita, Audacity, CrystalDiskInfo, Firefox and Everything. Apps whose shortcut passes arguments are also out, including Brave and other Chromium builds that set a profile folder this way. Adding an `args` field to the schema could bring some back.
 - **Skipped scripts** can change an app's defaults, and the script classification is keyword-based, so some included apps may fail or behave differently.
 - **Reliance on Scoop's buckets:** ephget doesn't use Scoop itself, but its catalog depends on the buckets continuing to be updated. If they stop, the index goes stale and old download URLs start failing.
-- **arm64:** only 228 of the 1,663 eligible apps list an arm64 build. Others that have no architecture-independent build run under x64 emulation.
+- **arm64:** only 213 of the 1,584 eligible apps have an eligible arm64 build. Others that have no architecture-independent build run under x64 emulation.
 - **SmartScreen** may still warn on unsigned executables even after Mark of the Web is cleared, depending on system policy.
 
 ### Open questions
 
-- [x] How many eligible apps does the catalog contain? 1,663 GUI apps in Scoop's buckets (M0).
-- [ ] Is it fine to redistribute manifest data from each bucket? `Main` and `Extras` use the Unlicense and `Nirsoft` and `Sysinternals` use MIT, but the `Games` licence is Creative Commons and still needs reading.
+- [x] How many eligible apps does the catalog contain? 1,584 GUI apps in Scoop's buckets (M1; the M0 survey's rougher rules gave 1,663).
+- [x] Is it fine to redistribute manifest data from each bucket? Yes. `Main` and `Extras` use the Unlicense, `Games` uses CC0 and needs nothing further, and `Nirsoft` and `Sysinternals` use MIT, whose notices ship in `NOTICE.md`.
 - [ ] How often does skipping a script actually break an app? Answered by the sample test in M2.
 
 ## 10. Milestones
@@ -468,27 +472,27 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 
 ### M1 — Index pipeline
 
-- [ ] Turn the survey script into the indexer: emit schema-1 `index.json.gz` and its `.sha256`.
-- [ ] Add per-architecture entries, `extract_dir`, `rename`, `persist` and the shortcut name to the index.
-- [ ] Store each bucket's last processed commit; re-parse only manifests changed since (`git diff --name-only`).
+- [x] Turn the survey script into the indexer: emit schema-1 `index.json.gz` and its `.sha256`.
+- [x] Add per-architecture entries, `extract_dir`, `rename`, `persist` and the shortcut name to the index.
+- [x] Store each bucket's last processed commit; re-parse only manifests changed since (`git diff --name-only`).
 - [ ] GitHub Action on a daily schedule plus manual trigger, caching the clones between runs.
-- [ ] Upload to the rolling `latest` release.
-- [ ] Fail the build if the index exceeds 300 KB or any entry lacks a URL, hash or exe path.
-- [ ] Read the `Games` bucket licence; drop the bucket if it doesn't allow this use.
+- [x] Upload to the rolling `latest` release.
+- [x] Fail the build if the index exceeds 300 KB or any entry lacks a URL, hash or exe path.
+- [x] Read the `Games` bucket licence; drop the bucket if it doesn't allow this use. It's CC0, so the bucket stays.
 
 **Done when:** the client URL serves a fresh index every day and a repeat request with the ETag returns 304.
 
 ### M2 — Core client
 
-- [ ] Go module with shared internal packages and two entry points: `ephget.exe` (console) and `ephgetw.exe` (GUI subsystem).
-- [ ] `config.json` load and save with defaults (TTL 7 days, keep preferences on, Desktop + Start Menu).
-- [ ] Index fetch with ETag, gzip decode, fuzzy search; `search` command.
-- [ ] `add`: create stubs via `IShellLink` targeting `ephgetw.exe`, with full arguments and the `ephget:<id>` marker, in the shortcut folder and the Start Menu if enabled.
-- [ ] `fetch`: pick the installer for the machine's architecture, show progress in the console, download, verify SHA256, extract zip or 7z with zip-slip protection, apply `extract_dir` and `rename`, check the exe exists, clear Mark of the Web.
-- [ ] Download and launch a sample of 20–30 eligible apps with skipped scripts, in a VM; fix the classifier for anything that breaks.
-- [ ] `run`: if not cached, start `ephget fetch` in a new console and wait for it, exiting if it fails. Launch with `CreateProcess`, wait until no process from the app folder remains, record launch and close times.
-- [ ] `state.json` with a lock file and atomic writes; rebuild entries from stub arguments when missing.
-- [ ] `list` command.
+- [x] Go module with shared internal packages and two entry points: `ephget.exe` (console) and `ephgetw.exe` (GUI subsystem).
+- [x] `config.json` load and save with defaults (TTL 7 days, keep preferences on, Desktop + Start Menu).
+- [x] Index fetch with ETag, gzip decode, fuzzy search; `search` command.
+- [x] `add`: create stubs via `IShellLink` targeting `ephgetw.exe`, with full arguments and the `ephget:<id>` marker, in the shortcut folder and the Start Menu if enabled.
+- [x] `fetch`: pick the installer for the machine's architecture, show progress in the console, download, verify SHA256, extract zip or 7z with zip-slip protection, apply `extract_dir` and `rename`, check the exe exists, clear Mark of the Web.
+- [ ] Download and launch a sample of 20–30 eligible apps with skipped scripts, in a VM; fix the classifier for anything that breaks. The download half is done: 32 of 32 downloaded, verified and extracted with the launch exe present. Launching needs a Windows VM.
+- [x] `run`: if not cached, start `ephget fetch` in a new console and wait for it, exiting if it fails. Launch with `CreateProcess`, wait until no process from the app folder remains, record launch and close times.
+- [x] `state.json` with a lock file and atomic writes; rebuild entries from stub arguments when missing.
+- [x] `list` command.
 
 **Done when:** on a clean machine, search → add → click downloads and runs the app, and a second click starts it instantly while offline.
 
