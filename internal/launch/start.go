@@ -13,6 +13,7 @@ const (
 	errorElevationRequired = syscall.Errno(740)
 	seeMaskNoCloseProcess  = 0x40
 	swShowNormal           = 1
+	startfTitleIsLinkName  = 0x800
 )
 
 var (
@@ -37,6 +38,28 @@ type shellExecuteInfo struct {
 	hotKey     uint32
 	icon       uintptr
 	process    syscall.Handle
+}
+
+// launchedFrom returns the .lnk this process was started from, or "" if it wasn't
+// started from one. Windows passes the path in the startup info's title field.
+func launchedFrom() string {
+	var startup syscall.StartupInfo
+	startup.Cb = uint32(unsafe.Sizeof(startup))
+	if err := syscall.GetStartupInfo(&startup); err != nil {
+		return ""
+	}
+	if startup.Flags&startfTitleIsLinkName == 0 || startup.Title == nil {
+		return ""
+	}
+	n := 0
+	for *(*uint16)(unsafe.Add(unsafe.Pointer(startup.Title), n*2)) != 0 {
+		n++
+	}
+	path := syscall.UTF16ToString(unsafe.Slice(startup.Title, n))
+	if !strings.EqualFold(filepath.Ext(path), ".lnk") {
+		return ""
+	}
+	return path
 }
 
 // createProcess starts exe and returns its process handle. It calls CreateProcess

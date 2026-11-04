@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,5 +103,21 @@ func TestAddShortcutIgnoresCase(t *testing.T) {
 	e.AddShortcut(`C:\B.lnk`)
 	if len(e.Shortcuts) != 2 {
 		t.Fatal(e.Shortcuts)
+	}
+}
+
+func TestTrackShortcutReplacesAMovedStub(t *testing.T) {
+	dir := t.TempDir()
+	old, kept, moved := filepath.Join(dir, "old.lnk"), filepath.Join(dir, "kept.lnk"), filepath.Join(dir, "moved.lnk")
+	for _, path := range []string{kept, moved} {
+		if err := os.WriteFile(path, nil, 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &Entry{Shortcuts: []string{old, kept}}
+	e.TrackShortcut(moved)
+	e.TrackShortcut(strings.ToUpper(moved)) // the same stub, however it's spelled
+	if len(e.Shortcuts) != 2 || e.Shortcuts[0] != kept || e.Shortcuts[1] != moved {
+		t.Fatalf("%q", e.Shortcuts)
 	}
 }

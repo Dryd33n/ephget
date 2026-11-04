@@ -16,7 +16,7 @@ Many apps are needed once or rarely: a disk utility, a file converter, a one-off
 - Automatic removal of apps not used within a configurable time-to-live (TTL), counted from when the app was last closed.
 - A per-app "keep preferences for next time" toggle that either keeps or removes the app's settings when it expires.
 - Search across all eligible GUI apps in the catalog.
-- Minimal footprint: nothing running unless an ephget app is open, no admin rights, one small executable.
+- Minimal footprint: nothing running unless an ephget app is open, no admin rights, two small executables.
 - Every download verified against the catalog's SHA256 hash.
 
 ### Non-goals
@@ -60,6 +60,7 @@ There is no separate setup step. Installing ephget (a one-line PowerShell instal
 | `ephget search <query>` | Fuzzy-matches ID, name and description in the index; prints ID, name, version and description. |
 | `ephget add <id> [--ttl 7d] [--keep-prefs \| --no-keep-prefs] [--pin] [--dir <folder>] [--no-start-menu]` | Creates stub shortcuts. Does not download the app. |
 | `ephget set <id> [--ttl 1h] [--keep-prefs \| --no-keep-prefs] [--pin \| --no-pin]` | Changes an app's settings and rewrites its known stubs to match. |
+| `ephget remove <id>` | Deletes the app's stubs, cached files and state entry, wherever the stubs are. Refuses while the app is open or downloading. |
 | `ephget list` | Shows shortcuts, cached apps, version and pin, last close and time until removal. |
 | `ephget config [--ttl] [--keep-prefs \| --no-keep-prefs] [--shortcut-dir <folder>] [--start-menu \| --no-start-menu]` | Shows or sets the defaults used by `add`. |
 | `ephget uninstall` | Removes all cached apps, stubs, the scheduled task, the PATH entry and the data folder. |
@@ -69,7 +70,7 @@ There is no separate setup step. Installing ephget (a one-line PowerShell instal
 
 Defaults: TTL 7 days, keep preferences on, shortcuts on the Desktop and in the Start Menu.
 
-Removing an app has no command: the user deletes its shortcut (F8).
+An app normally has two stubs, so removing it is a command rather than a job of finding both (F8).
 
 ### Expiry and preferences
 
@@ -94,7 +95,7 @@ A gives the terminal-style transparency of B without making WinGet a runtime dep
 
 ## 4. User flows
 
-Every app moves through four states, and reaping returns it to a stub rather than removing it. The stub is the app: deleting the shortcut is how a user removes an app, and there is no remove command.
+Every app moves through four states, and reaping returns it to a stub rather than removing it. An app ends when the user runs `ephget remove` or deletes all of its stubs.
 
 ```mermaid
 stateDiagram-v2
@@ -105,8 +106,8 @@ stateDiagram-v2
     Running --> Cached: app closed
     Cached --> Running: shortcut clicked
     Cached --> Stub: TTL passed (reap)
-    Stub --> [*]: shortcut deleted (reap)
-    Cached --> [*]: shortcut deleted (reap)
+    Stub --> [*]: ephget remove, or all stubs deleted (reap)
+    Cached --> [*]: ephget remove, or all stubs deleted (reap)
 ```
 
 ### F1. Install ephget
@@ -154,9 +155,12 @@ stateDiagram-v2
 
 ### F8. Remove an app
 
-1. User deletes the shortcut, like any other file.
-2. On the next reap pass (within the hour), ephget sees that none of the app's shortcuts exist and treats it as expired immediately, whatever its TTL.
-3. The cached app is deleted, along with its settings if keep preferences is off, and the state entry and icon are dropped. Nothing of the app remains.
+1. User runs `ephget remove <id>`. It needs no network and works for an app that has left the catalog.
+2. ephget moves `apps\<id>\` aside to `tmp\`. If that fails, the app is open: it says so and changes nothing. It also refuses while the app is downloading.
+3. The app's stubs are deleted: its recorded paths, and any others the scan finds (Finding stubs). Only `.lnk` files with this app's marker are touched. A stub it can't delete is listed for the user.
+4. The files are deleted, along with its settings if keep preferences is off, and the state entry and icon are dropped. Nothing of the app remains.
+
+Deleting the shortcuts by hand also works. On the next reap pass (within the hour), ephget sees that none of the app's shortcuts exist and treats it as expired immediately, whatever its TTL. Deleting only one of them leaves the app in place.
 
 ### F9. Uninstall ephget
 
@@ -348,7 +352,7 @@ A cached launch performs no network access and reads no index. While waiting, th
 ### Download path (`ephget fetch <id>`)
 
 1. Load the index (refresh first if older than 24 h) and pick the installer for the machine's architecture, preferring native over x64 emulation on arm64.
-2. Download to `tmp\` with progress shown (section 3); verify SHA256. On mismatch, delete and fail.
+2. Download to `tmp\` with progress shown (section 3); verify SHA256. On mismatch, delete and fail. Like Scoop, requests send the file's folder as the `Referer`, except to SourceForge and PortableApps: Nirsoft and other hosts answer with a web page if it's missing, and those two do if it's present.
 3. Extract (zip, 7z) or move (exe) into `apps\<id>\<version>\`, using `extract_dir` as the root if set and applying `rename` if set. If the launch exe isn't there, delete the files and fail. Clear the Mark of the Web; extract the exe's icon to `icons\<id>.ico` and update the shortcut's icon.
 4. Move any saved settings from `prefs\<id>\` back into the app folder. Record the version and path in `state.json` and exit 0. On failure, show the error and a retry prompt; if the user declines, exit non-zero.
 
@@ -391,9 +395,9 @@ The footprint is always recorded, so the keep-preferences toggle can be changed 
 
 Users can move or copy stubs anywhere, so ephget never relies only on the paths it created.
 
-1. **Track on launch.** When Windows starts a program from a shortcut, it passes the `.lnk` path in the startup info (`STARTF_TITLEISLINKNAME`). Every `run` records that path in `shortcuts`, so a moved stub is re-learned the first time it is clicked.
+1. **Track on launch.** When Windows starts a program from a shortcut, it passes the `.lnk` path in the startup info (`STARTF_TITLEISLINKNAME`). Every `run` records that path in `shortcuts` and forgets recorded paths that no longer exist, so a moved stub replaces its old path the first time it is clicked.
 2. **Identify by content.** Every stub's arguments start with `run <id>` and its description field carries an `ephget:<id>` marker, so any `.lnk` can be recognised without a lookup table.
-3. **Scan when needed** (`uninstall`, `set`, and the reaper's deleted-shortcut check). Check the recorded paths first; then scan the configured shortcut folder, the user and public Desktop, the Start Menu, the taskbar pin folder and the user's Documents and Downloads for `.lnk` files with the marker.
+3. **Scan when needed** (`remove`, `uninstall`, `set`, and the reaper's deleted-shortcut check). Check the recorded paths first; then scan the configured shortcut folder, the user and public Desktop, the Start Menu, the taskbar pin folder and the user's Documents and Downloads for `.lnk` files with the marker.
 4. **Report what's left.** Stubs not found are listed by last known path for manual deletion.
 
 ### Index refresh
@@ -421,7 +425,7 @@ Lightweight is the primary design constraint: when no ephget app is open, ephget
 | NF-2 | Cached launch overhead | < 50 ms from click to `CreateProcess` |
 | NF-3 | Binary size | < 10 MB per exe, stripped (`-ldflags "-s -w"`) |
 | NF-4 | Dependencies | Go standard library + direct Win32/COM calls + one pure-Go 7z reader; no GUI framework, no Scoop, no PowerShell at runtime, no external 7z/lessmsi |
-| NF-5 | Index download | < 300 KB compressed; daily check normally a 304 |
+| NF-5 | Index download | < 300 KB compressed, at most once a day. The index is republished daily, so a refresh is normally a full download; a 304 only happens if nothing has been published since the last check |
 | NF-6 | Privileges | Never requires admin; per-user task and paths only |
 | NF-7 | Supported OS | Windows 10 (1809+) and 11, x64 and arm64 |
 | NF-8 | Footprint after uninstall | Data folder, PATH entry and scheduled task removed; nothing else left by ephget |
@@ -498,7 +502,9 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 
 ### M3 — Expiry
 
-- [ ] TTL parsing (hours and days, minimum 1 hour).
+- [x] TTL parsing (hours and days, minimum 1 hour).
+- [x] `ephget remove`: delete an app's stubs, files and state; refuse while it's open or downloading. Footprint and icon removal come with those features in M4.
+- [x] Stub tracking via `STARTF_TITLEISLINKNAME`; marker scan.
 - [ ] Reaper as specified in section 7, including the deleted-shortcut check.
 - [ ] Register the per-user `ephget-reap` task (logon + hourly, no wake); re-register from any CLI command if missing.
 - [ ] Reap pass after each app closes.
@@ -512,7 +518,6 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 - [ ] Settings footprint: snapshot before first launch, diff after close, name matching.
 - [ ] Keep-preferences toggle: save and restore persist-list items when on; delete the footprint and saved items on reap when off.
 - [ ] Icon extraction and shortcut icon update.
-- [ ] Stub tracking via `STARTF_TITLEISLINKNAME`; marker scan.
 - [ ] Version pinning (`--pin`, stored URL and hash, fallback to the bucket's Git history).
 - [ ] `uninstall`.
 - [ ] Every exception flow in section 4.

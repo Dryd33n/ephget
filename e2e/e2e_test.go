@@ -295,6 +295,78 @@ func TestAddRefusesUnknownAppsAndForeignShortcuts(t *testing.T) {
 	}
 }
 
+// Moving a stub and clicking it replaces the recorded path, so remove finds it.
+func TestClickTracksAMovedStubAndRemoveDeletesIt(t *testing.T) {
+	e := setup(t)
+	if out, err := e.ephget("add", "testapp", "--dir", e.stubs, "--no-start-menu"); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	stub := filepath.Join(e.stubs, "Test App.lnk")
+	movedDir := t.TempDir()
+	moved := filepath.Join(movedDir, "Renamed.lnk")
+	if err := os.Rename(stub, moved); err != nil {
+		t.Fatal(err)
+	}
+	e.click(moved)
+	s := e.waitClosed(time.Now().Add(-time.Minute))
+	if len(s.Shortcuts) != 1 || !strings.EqualFold(s.Shortcuts[0], moved) {
+		t.Fatalf("recorded %q, want only %q", s.Shortcuts, moved)
+	}
+
+	out, err := e.ephget("remove", "testapp")
+	if err != nil {
+		t.Fatalf("remove: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(moved); err == nil {
+		t.Error("stub still exists")
+	}
+	if _, err := os.Stat(filepath.Join(e.home, "apps", "testapp")); err == nil {
+		t.Error("app still exists")
+	}
+	if s := e.state(); s != nil {
+		t.Errorf("state entry survived: %+v", s)
+	}
+	if out, err := e.ephget("remove", "testapp"); err == nil || !strings.Contains(out, "isn't added") {
+		t.Errorf("second remove: %v\n%s", err, out)
+	}
+}
+
+func TestRemoveRefusesARunningApp(t *testing.T) {
+	e := setup(t)
+	t.Setenv("TESTAPP_MILLIS", "12000") // longer than the rename's retries
+	if out, err := e.ephget("add", "testapp", "--dir", e.stubs, "--no-start-menu"); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	stub := filepath.Join(e.stubs, "Test App.lnk")
+	e.click(stub)
+	deadline := time.Now().Add(30 * time.Second)
+	for e.appStarts() < 1 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if e.appStarts() != 1 {
+		t.Fatal("app never started")
+	}
+
+	out, err := e.ephget("remove", "testapp")
+	if err == nil || !strings.Contains(out, "is open") {
+		t.Fatalf("remove of a running app: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(stub); err != nil {
+		t.Errorf("stub deleted: %v", err)
+	}
+	if s := e.state(); s == nil || !s.Cached(e.home) {
+		t.Errorf("app damaged: %+v", s)
+	}
+
+	e.waitClosed(time.Now().Add(-time.Minute))
+	if out, err := e.ephget("remove", "testapp"); err != nil {
+		t.Fatalf("remove after closing: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(stub); err == nil {
+		t.Error("stub still exists after closing")
+	}
+}
+
 func TestEphgetwHasNoNetworkCode(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "github.com/Dryd33n/ephget/cmd/ephgetw").CombinedOutput()
 	if err != nil {

@@ -22,11 +22,11 @@ The workspace root is not a Git repo. It holds two separate repos:
 
 M0 survey is done. M1's indexer is live: the workflow has run by hand on GitHub, publishing 1,584 apps at about 216 KB. The user's 20-app spot-check was set aside for now.
 
-M2's code is written and passes its tests, but M2 isn't done: no real catalog app has been launched, because that needs a Windows VM. The only VM on this machine is a Debian one in VirtualBox, and Windows 11 Home has no Windows Sandbox. End-to-end tests run the real executables and click a real stub, with `internal/testapp` standing in for the app.
+M2's code is written and passes its tests, but M2 isn't done: the sample test and the clean-machine check need a Windows VM. The user ran one real app themselves on this machine: Etcher downloaded, opened and recorded its close, using the default Desktop and Start Menu folders. Their copy of ephget's data is in `%LOCALAPPDATA%\ephget`. The same session found `fysty`, the catalog's PuTTY, returns a 404: its manifest's URL is dead, and neither the indexer nor `add` checks for that. The only VM on this machine is a Debian one in VirtualBox, and Windows 11 Home has no Windows Sandbox. End-to-end tests run the real executables and click a real stub, with `internal/testapp` standing in for the app.
 
 **Next: finish M2 in a Windows VM, then M3 (spec sections 7 and 10).** In the VM, copy `dist/ephget.exe` and `dist/ephgetw.exe` to one folder, then:
 
-1. Check the "Done when" line in M2: `ephget search`, `ephget add`, click the Desktop shortcut, then click it again offline. `add` with its default Desktop and Start Menu folders hasn't been run yet; tests use `--dir` and `--no-start-menu`.
+1. Check the "Done when" line in M2: `ephget search`, `ephget add`, click the Desktop shortcut, then click it again offline.
 2. Add and open each app in the sample below, and note which fail. All 32 have already downloaded, verified and extracted without errors on this machine, with nothing run. The first 10 use `rename`, the rest had a script skipped.
 
 ```
@@ -43,7 +43,9 @@ M1 has one open box, left unticked in the spec: no scheduled run had happened ye
 curl -s "https://api.github.com/repos/Dryd33n/ephget-index/actions/workflows/build-index.yml/runs?event=schedule&per_page=1"
 ```
 
-All of M2's code, plus the spec and `CLAUDE.md` edits from M1 and M2, are uncommitted in `ephget/`. The user hasn't decided whether to commit them, so ask before including them in a commit.
+M2's code is committed as `282ab37`. `ephget remove`, stub tracking and the `Referer` are uncommitted. `CLAUDE.md` is tracked even though `.gitignore` lists it.
+
+**Priority:** get the client's main functionality working first; refining the catalog comes later. That covers the catalog problems found on 2026-11-04: about 38 of 1,583 URLs failed even with a `Referer` (26 of them 404s), and nothing checks URLs at index time. Also parked: skipped scripts and Scoop's creation of missing `persist` folders both switch some apps into portable mode, and ephget does neither, so apps like OBS and VLC may keep settings in `%APPDATA%`. Check where settings land during the sample test, not just that the app opens.
 
 The survey stays on branch `m0-survey`, on purpose: the user doesn't want the survey code on `main`. `git -C ephget-index show m0-survey:survey/survey_scoop.py` reads it. Its 1,663 count used rougher rules and is superseded.
 
@@ -53,6 +55,8 @@ The survey stays on branch `m0-survey`, on purpose: the user doesn't want the su
 - **Starting processes:** use `createProcess` in `internal/launch`, not `os/exec`, for the app and the fetch console. `os/exec` always redirects standard handles, which leaves a new console blank and unable to read input.
 - **Test apps:** build `internal/testapp` with `-H=windowsgui` unless a test needs a console. A console build makes Windows open a window for it, which adds about 450 ms to each launch.
 - **`EPHGET_HOME`:** overrides the data folder. Use it for any manual run, so nothing touches a real installation.
+- **Removing apps:** `internal/reap` has no network code, so the M3 reaper can share it with `remove`. Moving the app folder comes first, because that fails while the app runs and nothing has changed yet.
+- **Real folders:** with `EPHGET_HOME` set, `remove` doesn't scan the real Desktop, Start Menu or Documents.
 - **Hash file:** the client doesn't read `index.json.gz.sha256`. The release's files are replaced one at a time, so the pair can briefly disagree during a publish, and gzip's own checksum and a JSON parse already catch damage.
 - **Sample test:** if an app breaks because of a skipped script, fix the classifier in `ephget-index/build_index.py` and add a test. Any change to that file causes a full parse on the next run.
 - **Publishing a fix:** merge to `ephget-index` `main` and start the workflow from the Actions tab. Take a fresh screenshot before each click in the browser, because the page navigates after a run starts.
@@ -80,7 +84,11 @@ git clone --depth 1 --no-checkout --single-branch https://github.com/ScoopInstal
 
 Not yet fixed in the spec; deal with them in M3 and M4:
 
-- **Reaper:** step 3 treats a failed rename as "app is running", but the rename also fails when the folder doesn't exist. A deleted shortcut for an uncached app never has its state dropped, and uncached entries get a `last_closed` write every hour.
+- **Reaper:** step 3 treats a failed rename as "app is running", but the rename also fails when the folder doesn't exist. A deleted shortcut for an uncached app never has its state dropped, and uncached entries get a `last_closed` write every hour. `reap.Remove` already checks that the folder exists first. The spec also doesn't say what happens to an entry with neither timestamp, or who cleans up a `.reaping` folder left by a crash.
+- **`ephgetw` errors:** it shows a message box on any error, which the hourly reap must not do.
+- **Tests:** anything using `EPHGET_HOME` must not register the real scheduled task.
+- **`uninstall`:** it has to delete its own running exe, and the spec has no plan for that.
+- **`persist`:** the client's `validate` doesn't check these paths yet, and must before M4 uses them.
 - **Rebuilt state entries:** a rebuilt entry has no footprint and may count as a first run, so the comparison finds nothing new and settings cleanup silently stops.
 
 ## Working here

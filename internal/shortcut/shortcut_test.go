@@ -40,6 +40,38 @@ func TestKnownFolders(t *testing.T) {
 	}
 }
 
+func TestSearchFoldersResolve(t *testing.T) {
+	folders := SearchFolders()
+	if len(folders) != 6 {
+		t.Fatalf("got %d folders: %q", len(folders), folders)
+	}
+	// The taskbar folder, last, only exists once something has been pinned.
+	for _, folder := range folders[:5] {
+		if info, err := os.Stat(folder); err != nil || !info.IsDir() {
+			t.Errorf("%q: %v", folder, err)
+		}
+	}
+}
+
+func TestFindMatchesMarkerOnly(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(nested, "Mine.lnk")
+	for path, id := range map[string]string{mine: "vlc", filepath.Join(dir, "Other.lnk"): "gimp"} {
+		if err := Create(path, Link{Target: os.Args[0], Description: Marker(id)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "broken.lnk"), []byte("not a shortcut"), 0o666)
+	got := Find("vlc", []string{dir, filepath.Join(dir, "missing")})
+	if len(got) != 1 || !strings.EqualFold(got[0], mine) {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestFileName(t *testing.T) {
 	for in, want := range map[string]string{
 		"VLC media player": "VLC media player.lnk",

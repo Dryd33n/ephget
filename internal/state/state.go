@@ -47,6 +47,16 @@ func (e *Entry) AddShortcut(path string) {
 	}
 }
 
+// TrackShortcut records the stub the app was just opened from, and forgets recorded
+// stubs that no longer exist, so a moved stub replaces its old path.
+func (e *Entry) TrackShortcut(path string) {
+	e.Shortcuts = slices.DeleteFunc(e.Shortcuts, func(s string) bool {
+		_, err := os.Lstat(s)
+		return errors.Is(err, fs.ErrNotExist)
+	})
+	e.AddShortcut(path)
+}
+
 // Cached reports whether the app can launch from under home right now.
 func (e *Entry) Cached(home string) bool {
 	if e == nil || e.Path == "" || e.Exe == "" {

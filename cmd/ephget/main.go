@@ -21,6 +21,7 @@ import (
 	"github.com/Dryd33n/ephget/internal/fetch"
 	"github.com/Dryd33n/ephget/internal/index"
 	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/reap"
 	"github.com/Dryd33n/ephget/internal/shortcut"
 	"github.com/Dryd33n/ephget/internal/state"
 	"github.com/Dryd33n/ephget/internal/ttl"
@@ -29,6 +30,7 @@ import (
 const usage = `Usage:
   ephget search <query>
   ephget add <id> [--ttl 7d] [--keep-prefs | --no-keep-prefs] [--dir <folder>] [--no-start-menu]
+  ephget remove <id>
   ephget list
 `
 
@@ -64,6 +66,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdSearch(ctx, layout, args[1:])
 	case "add":
 		return cmdAdd(ctx, layout, args[1:])
+	case "remove":
+		return cmdRemove(layout, args[1:])
 	case "list":
 		return cmdList(layout, args[1:])
 	case "fetch":
@@ -297,6 +301,51 @@ func checkNotForeign(path, id string) error {
 	existing, err := shortcut.Read(path)
 	if err != nil || existing.Description != shortcut.Marker(id) {
 		return fmt.Errorf("%s already exists and isn't this app's shortcut. Move it, or use --dir", path)
+	}
+	return nil
+}
+
+func cmdRemove(layout paths.Layout, args []string) error {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return errors.New("usage: ephget remove <id>")
+	}
+	id := args[0]
+	cfg, err := config.Load(layout.Config())
+	if err != nil {
+		return err
+	}
+	var scan []string
+	if cfg.ShortcutDir != "" {
+		scan = append(scan, cfg.ShortcutDir)
+	}
+	// EPHGET_HOME marks a test or sample run, which must leave the real folders alone.
+	if os.Getenv("EPHGET_HOME") == "" {
+		scan = append(scan, shortcut.SearchFolders()...)
+	}
+	r, err := reap.Remove(layout, id, scan)
+	switch {
+	case errors.Is(err, reap.ErrNotAdded):
+		return fmt.Errorf("%s isn't added. See: ephget list", id)
+	case errors.Is(err, reap.ErrRunning):
+		return fmt.Errorf("%s is open, so nothing was removed. Close it and try again", id)
+	case errors.Is(err, reap.ErrDownloading):
+		return fmt.Errorf("%s is downloading, so nothing was removed. Close its window or wait, then try again", id)
+	}
+	if r != nil {
+		fmt.Printf("Removed %s.\n", r.ID)
+		for _, path := range r.Deleted {
+			fmt.Println("  deleted", path)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if len(r.Undeleted) > 0 {
+		for _, path := range r.Undeleted {
+			fmt.Fprintln(os.Stderr, "couldn't delete", path)
+		}
+		fmt.Fprintln(os.Stderr, "Delete these yourself. If one is opened, it downloads the app again.")
+		return errReported
 	}
 	return nil
 }

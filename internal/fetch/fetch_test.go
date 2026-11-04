@@ -135,6 +135,44 @@ func TestFetchZipWithExtractDirAndRename(t *testing.T) {
 	}
 }
 
+func TestRefererFor(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://www.nirsoft.net/toolsdownload/mspass.zip":        "https://www.nirsoft.net/toolsdownload/",
+		"https://host.example/a%20b/tool.zip?x=1#/dl.zip":         "https://host.example/a%20b/",
+		"http://user:secret@host.example:8080/tool.zip":           "http://host.example:8080/",
+		"https://downloads.sourceforge.net/project/tool/tool.zip": "",
+		"https://sourceforge.net/projects/tool/tool.zip":          "",
+		"https://portableapps.com/downloads/tool.zip":             "",
+		"https://notsourceforge.net/tool.zip":                     "https://notsourceforge.net/",
+		"https://host.example":                                    "",
+	} {
+		if got := refererFor(in); got != want {
+			t.Errorf("refererFor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFetchSendsReferer(t *testing.T) {
+	data := []byte("EXE")
+	var referer atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		referer.Store(r.Referer())
+		w.Write(data)
+	}))
+	defer srv.Close()
+	f := newFixture(t, pkg("tool", index.Installer{Type: "exe", URL: "/x", SHA256: sum(data), Exe: "tool.exe"}))
+	p := pkg("tool", index.Installer{Type: "exe", URL: srv.URL + "/files/tool.exe", SHA256: sum(data), Exe: "tool.exe"})
+	if err := os.WriteFile(f.c.Layout.Index(), gzipIndex(t, 1, p), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.c.Fetch(context.Background(), "tool"); err != nil {
+		t.Fatal(err)
+	}
+	if got := referer.Load(); got != srv.URL+"/files/" {
+		t.Fatalf("Referer %v", got)
+	}
+}
+
 func TestFetchLoneExeSavedUnderExeName(t *testing.T) {
 	data := []byte("MZ exe")
 	f := newFixture(t, pkg("bw", index.Installer{

@@ -45,7 +45,17 @@ func Run(layout paths.Layout, id string, opts Options) error {
 	if err != nil {
 		return err
 	}
+	link := launchedFrom()
+	track := func(e *state.Entry) {
+		if link != "" {
+			e.TrackShortcut(link)
+		}
+	}
 	if !entry.Cached(layout.Home) {
+		// Recorded now, because the download may fail or be cancelled.
+		if err := setTimes(store, id, track); err != nil {
+			return err
+		}
 		if err := download(layout, id); err != nil {
 			return err
 		}
@@ -68,7 +78,11 @@ func Run(layout paths.Layout, id string, opts Options) error {
 	// Clearing last_closed makes a crash fall back to last_launched, as the reaper
 	// expects, instead of leaving the previous session's close time in place.
 	now := time.Now().UTC()
-	if err := setTimes(store, id, func(e *state.Entry) { e.LastLaunched, e.LastClosed = &now, nil }); err != nil {
+	err = setTimes(store, id, func(e *state.Entry) {
+		e.LastLaunched, e.LastClosed = &now, nil
+		track(e)
+	})
+	if err != nil {
 		return err
 	}
 	if process != 0 {

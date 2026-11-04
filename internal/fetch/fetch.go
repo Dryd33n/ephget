@@ -297,6 +297,29 @@ func record(store state.Store, layout paths.Layout, pkg *index.Package, inst *in
 	})
 }
 
+// refererFor returns the file's own folder, which is what Scoop sends. Nirsoft and
+// other hosts answer with a web page instead of the file if there is no Referer.
+// SourceForge and PortableApps are the opposite, as they are in Scoop: a Referer
+// gets the web page.
+func refererFor(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, domain := range []string{"sourceforge.net", "portableapps.com"} {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return ""
+		}
+	}
+	path := u.EscapedPath()
+	slash := strings.LastIndex(path, "/")
+	if slash < 0 {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + path[:slash+1]
+}
+
 // download saves inst.URL to file and checks its hash before returning.
 func (c *Client) download(ctx context.Context, inst *index.Installer, file string) error {
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -306,6 +329,9 @@ func (c *Client) download(ctx context.Context, inst *index.Installer, file strin
 		return err
 	}
 	req.Header.Set("User-Agent", userAgent)
+	if referer := refererFor(inst.URL); referer != "" {
+		req.Header.Set("Referer", referer)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)

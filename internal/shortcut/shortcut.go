@@ -5,6 +5,9 @@ package shortcut
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -29,6 +32,10 @@ var (
 
 	folderDesktop  = syscall.GUID{Data1: 0xB4BFCC3A, Data2: 0xDB2C, Data3: 0x424C, Data4: [8]byte{0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41}}
 	folderPrograms = syscall.GUID{Data1: 0xA77F5D77, Data2: 0x2E2B, Data3: 0x44C3, Data4: [8]byte{0xA6, 0xA2, 0xAB, 0xA6, 0x01, 0x05, 0x4A, 0x51}}
+
+	folderPublicDesktop = syscall.GUID{Data1: 0xC4AA340D, Data2: 0xF20F, Data3: 0x4863, Data4: [8]byte{0xAF, 0xEF, 0xF8, 0x7E, 0xF2, 0xE6, 0xBA, 0x25}}
+	folderDocuments     = syscall.GUID{Data1: 0xFDD39AD0, Data2: 0x238F, Data3: 0x46AF, Data4: [8]byte{0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7}}
+	folderDownloads     = syscall.GUID{Data1: 0x374DE290, Data2: 0x123F, Data3: 0x4565, Data4: [8]byte{0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B}}
 )
 
 // Vtable slots, in the order the interfaces declare their methods.
@@ -179,6 +186,46 @@ func Read(path string) (Link, error) {
 
 // Marker is the description that identifies an app's stub (section 7, Finding stubs).
 func Marker(id string) string { return "ephget:" + id }
+
+// IsStubOf reports whether a shortcut is this app's stub.
+func IsStubOf(l Link, id string) bool { return strings.EqualFold(l.Description, Marker(id)) }
+
+// Find returns every .lnk under folders that is this app's stub. Folders it can't
+// read, and shortcuts it can't open, are skipped: the search is best-effort.
+func Find(id string, folders []string) []string {
+	var found []string
+	for _, folder := range folders {
+		filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if d != nil && d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.Type().IsRegular() && strings.EqualFold(filepath.Ext(path), ".lnk") {
+				if link, err := Read(path); err == nil && IsStubOf(link, id) {
+					found = append(found, path)
+				}
+			}
+			return nil
+		})
+	}
+	return found
+}
+
+// SearchFolders lists where a moved stub is likely to be (section 7, Finding stubs).
+func SearchFolders() []string {
+	var folders []string
+	for _, id := range []*syscall.GUID{&folderDesktop, &folderPublicDesktop, &folderPrograms, &folderDocuments, &folderDownloads} {
+		if path, err := knownFolder(id); err == nil {
+			folders = append(folders, path)
+		}
+	}
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		folders = append(folders, filepath.Join(appData, "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar"))
+	}
+	return folders
+}
 
 // Desktop returns the user's Desktop folder, wherever it has been redirected.
 func Desktop() (string, error) { return knownFolder(&folderDesktop) }

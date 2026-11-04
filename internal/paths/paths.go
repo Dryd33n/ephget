@@ -35,6 +35,14 @@ func (l Layout) Tmp() string       { return filepath.Join(l.Home, "tmp") }
 // FetchLock is held for as long as an app is being downloaded.
 func (l Layout) FetchLock(id string) string { return filepath.Join(l.Tmp(), id+".lock") }
 
+// AppRoot holds every version of an app.
+func (l Layout) AppRoot(id string) string { return filepath.Join(l.Home, "apps", id) }
+
+// Removing is where an app's folder goes while it is deleted. It is on the same
+// volume as AppRoot, so moving the folder there is a rename, which fails if the
+// app is running.
+func (l Layout) Removing(id string) string { return filepath.Join(l.Tmp(), id+".removing") }
+
 // AppRel is an app's folder relative to Home, as stored in state.json.
 func AppRel(id, version string) string { return filepath.Join("apps", id, version) }
 
