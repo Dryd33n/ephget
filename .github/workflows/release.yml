@@ -1,0 +1,51 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds ephget and publishes it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # publish the release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Not e2e: it clicks real shortcuts, which needs a logged-in desktop.
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./cmd/... ./internal/...
+
+      - name: Build
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.version=$env:TAG" -o out/ephget.exe ./cmd/ephget
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o out/ephgetw.exe ./cmd/ephgetw
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item install.ps1, LICENSE, THIRD_PARTY_NOTICES.md out/
+
+      - name: Write checksums
+        working-directory: out
+        run: |
+          $lines = Get-ChildItem -File | ForEach-Object { "$((Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
+          [IO.File]::WriteAllLines("$PWD/SHA256SUMS.txt", $lines)
+
+      # Marked latest explicitly: the install line relies on releases/latest, and the
+      # rolling `index` release must never hold that place once this one exists.
+      - name: Publish
+        working-directory: out
+        run: gh release create "$env:TAG" --latest --title "ephget $env:TAG" --generate-notes (Get-ChildItem -File).Name

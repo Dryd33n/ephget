@@ -108,6 +108,12 @@ func cmdUninstall(layout paths.Layout, args []string) error {
 	for _, item := range dataItems {
 		note(os.RemoveAll(filepath.Join(layout.Home, item)))
 	}
+	// An update renames an exe that's in use, and the next update deletes it.
+	if old, err := filepath.Glob(filepath.Join(layout.Home, "ephget*.exe.old-*")); err == nil {
+		for _, path := range old {
+			note(os.Remove(path))
+		}
+	}
 	note(removeProgram(layout.Home))
 
 	for _, problem := range problems {

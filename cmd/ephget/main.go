@@ -40,6 +40,7 @@ const (
   remove <id>      Delete an app, its shortcuts and its saved settings
   config           Show or change the defaults for new apps
   uninstall        Remove ephget and everything it added
+  version          Show which version this is
 `
 
 	usageOptions = `  add     --ttl 7d  --keep-prefs | --no-keep-prefs  --pin  --dir <folder>  --no-start-menu
@@ -59,6 +60,9 @@ func printUsage(w io.Writer, s ui.Styler) {
 }
 
 const maxSearchResults = 25
+
+// version is set when a release is built (-X main.version=v1.2.3).
+var version = "dev"
 
 func main() {
 	// Closing the console arrives as SIGTERM. Cancelling lets a download clean up
@@ -93,6 +97,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printUsage(os.Stdout, ui.Out)
+		return nil
+	}
+	if args[0] == "version" || args[0] == "--version" {
+		fmt.Println("ephget", version)
 		return nil
 	}
 	// Registering the task only to delete it again would be silly.
@@ -567,7 +575,9 @@ func cmdConfig(layout paths.Layout, args []string) error {
 			}
 		}
 	}
-	if len(args) > 0 {
+	// The installer relies on the file existing, to tell an update from a first install.
+	_, statErr := os.Stat(layout.Config())
+	if len(args) > 0 || errors.Is(statErr, os.ErrNotExist) {
 		if err := config.Save(layout.Config(), cfg); err != nil {
 			return err
 		}

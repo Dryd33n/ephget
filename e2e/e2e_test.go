@@ -836,6 +836,153 @@ func TestPipedOutputIsPlain(t *testing.T) {
 	}
 }
 
+// releaseFolder lays out what a release publishes, from the builds setup made.
+func (e *env) releaseFolder(ephgetw []byte) string {
+	e.t.Helper()
+	dir := e.t.TempDir()
+	var sums strings.Builder
+	for _, name := range []string{"ephget.exe", "ephgetw.exe"} {
+		data, err := os.ReadFile(filepath.Join(e.bin, name))
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if name == "ephgetw.exe" && ephgetw != nil {
+			data = ephgetw
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o777); err != nil {
+			e.t.Fatal(err)
+		}
+		hash := sha256.Sum256(data)
+		sums.WriteString(hex.EncodeToString(hash[:]) + "  " + name + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS.txt"), []byte(sums.String()), 0o666); err != nil {
+		e.t.Fatal(err)
+	}
+	return dir
+}
+
+// install runs the script the way the install line does, through iex, in the Windows
+// PowerShell every machine has. EPHGET_HOME keeps it away from the real PATH and task.
+func (e *env) install(source string) (string, error) {
+	e.t.Helper()
+	script, err := filepath.Abs(filepath.Join("..", "install.ps1"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+		"iex (Get-Content -Raw -LiteralPath '"+script+"')")
+	cmd.Env = append(os.Environ(), "EPHGET_INSTALL_SOURCE="+source, "EPHGET_INSTALL_YES=1")
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func TestInstallScriptInstallsAndWorks(t *testing.T) {
+	e := setup(t)
+	out, err := e.install(e.releaseFolder(nil))
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Installed ephget dev") {
+		t.Fatalf("output:\n%s", out)
+	}
+	config, err := os.ReadFile(filepath.Join(e.home, "config.json"))
+	if err != nil || !strings.Contains(string(config), `"ttl": "7d"`) {
+		t.Fatalf("config %q, %v", config, err)
+	}
+	// The installed copy works, and creates stubs that point at the installed ephgetw.
+	installed := exec.Command(filepath.Join(e.home, "ephget.exe"), "add", "testapp", "--dir", e.stubs, "--no-start-menu")
+	if out, err := installed.CombinedOutput(); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	link, err := shortcut.Read(filepath.Join(e.stubs, "Test App.lnk"))
+	if err != nil || !strings.EqualFold(link.Target, filepath.Join(e.home, "ephgetw.exe")) {
+		t.Fatalf("stub: %+v, %v", link, err)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(os.TempDir(), "ephget-install-*")); len(entries) != 0 {
+		t.Errorf("left behind: %q", entries)
+	}
+}
+
+func TestInstallScriptRefusesABadDownload(t *testing.T) {
+	e := setup(t)
+	source := e.releaseFolder(nil)
+	if err := os.WriteFile(filepath.Join(source, "ephget.exe"), []byte("tampered"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.install(source)
+	if err == nil || !strings.Contains(out, "failed verification") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, "ephget.exe")); err == nil {
+		t.Error("installed a file that failed verification")
+	}
+}
+
+// An app left open has a waiting ephgetw, whose exe can't be overwritten.
+func TestUpdateWorksWhileALauncherIsRunning(t *testing.T) {
+	e := setup(t)
+	first := e.releaseFolder(nil)
+	if out, err := e.install(first); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	// Something that stays running, in ephgetw.exe's place.
+	running := filepath.Join(e.home, "ephgetw.exe")
+	app := filepath.Join(t.TempDir(), "testapp.exe")
+	build(t, app, "-s -w -H=windowsgui", "github.com/Dryd33n/ephget/internal/testapp")
+	data, err := os.ReadFile(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(running, data, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TESTAPP_MILLIS", "60000")
+	cmd := exec.Command(running)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
+
+	out, err := e.install(first)
+	if err != nil || !strings.Contains(out, "Updated to ephget dev") {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	want, _ := os.ReadFile(filepath.Join(e.bin, "ephgetw.exe"))
+	got, _ := os.ReadFile(running)
+	if !bytes.Equal(want, got) {
+		t.Error("ephgetw.exe wasn't replaced")
+	}
+	cmd.Process.Kill()
+	cmd.Wait()
+
+	// The next update clears the old copy, and uninstall would too.
+	if old, _ := filepath.Glob(running + ".old-*"); len(old) != 1 {
+		t.Fatalf("old copies: %q", old)
+	}
+	uninstall := exec.Command(filepath.Join(e.bin, "ephget.exe"), "uninstall")
+	uninstall.Stdin = strings.NewReader("y\n")
+	if out, err := uninstall.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, out)
+	}
+	if old, _ := filepath.Glob(running + ".old-*"); len(old) != 0 {
+		t.Errorf("uninstall left: %q", old)
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	e := setup(t)
+	custom := filepath.Join(t.TempDir(), "ephget.exe")
+	build(t, custom, "-s -w -X main.version=v1.2.3", "github.com/Dryd33n/ephget/cmd/ephget")
+	out, err := exec.Command(custom, "version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ephget v1.2.3" {
+		t.Fatalf("%v: %q", err, out)
+	}
+	if out, err := e.ephget("--version"); err != nil || strings.TrimSpace(out) != "ephget dev" {
+		t.Fatalf("%v: %q", err, out)
+	}
+}
+
 func TestEphgetwHasNoNetworkCode(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "github.com/Dryd33n/ephget/cmd/ephgetw").CombinedOutput()
 	if err != nil {

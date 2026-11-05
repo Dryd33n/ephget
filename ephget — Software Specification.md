@@ -51,7 +51,7 @@ Users interact with ephget through a small CLI and through the desktop shortcuts
 
 ### Installation
 
-There is no separate setup step. Installing ephget (a one-line PowerShell installer, or later a WinGet package) copies `ephget.exe` and `ephgetw.exe` to `%LOCALAPPDATA%\ephget\`, adds that folder to the user `PATH`, and registers the `ephget-reap` scheduled task. Every CLI command also checks that the task exists and runs this copy of `ephgetw.exe`, and re-registers it if not, so a deleted or out-of-date task heals itself.
+There is no separate setup step. Running the installer again updates ephget, keeping its settings; ephget doesn't update itself, because replacing its own exe is more code and the kind of behaviour antivirus dislikes. An exe in use by a waiting launcher can't be overwritten, so the installer renames it first, and the next update deletes it. Installing ephget (a one-line PowerShell installer, or later a WinGet package) copies `ephget.exe` and `ephgetw.exe` to `%LOCALAPPDATA%\ephget\`, adds that folder to the user `PATH`, and registers the `ephget-reap` scheduled task. Every CLI command also checks that the task exists and runs this copy of `ephgetw.exe`, and re-registers it if not, so a deleted or out-of-date task heals itself.
 
 ### Commands
 
@@ -64,6 +64,7 @@ There is no separate setup step. Installing ephget (a one-line PowerShell instal
 | `ephget list` | Shows shortcuts, cached apps, version and pin, last close and time until removal. |
 | `ephget config [--ttl] [--keep-prefs \| --no-keep-prefs] [--shortcut-dir <folder>] [--start-menu \| --no-start-menu]` | Shows or sets the defaults used by `add`. |
 | `ephget uninstall` | Removes all cached apps, stubs, the scheduled task, the PATH entry and the data folder. |
+| `ephget version` | Shows which version this is. |
 | `ephget fetch <id> [--pin <version>]` | Started by `ephgetw run` when the app isn't cached, not typed by users. Refreshes the index if stale, then downloads, verifies and extracts the app in a console window. |
 | `ephgetw run <id> [--ttl] [--keep-prefs \| --no-keep-prefs] [--pin <version>]` | Stub target, not typed by users. Starts `ephget fetch` if not cached, launches the app, records when it closes. |
 | `ephgetw reap` | Deletes cached apps past their TTL. Run by the scheduled task. |
@@ -446,7 +447,7 @@ Lightweight is the primary design constraint: when no ephget app is open, ephget
 | NF-4 | Dependencies | Go standard library + direct Win32/COM calls + one pure-Go 7z reader; no GUI framework, no Scoop, no PowerShell at runtime, no external 7z/lessmsi |
 | NF-5 | Index download | < 300 KB compressed, at most once a day. The index is republished daily, so a refresh is normally a full download; a 304 only happens if nothing has been published since the last check |
 | NF-6 | Privileges | Never requires admin; per-user task and paths only |
-| NF-7 | Supported OS | Windows 10 (1809+) and 11, x64 and arm64 |
+| NF-7 | Supported OS | Windows 10 (1809+) and 11. x64 builds only until an arm64 build can be tested; on arm64 they run under emulation and still pick native arm64 apps |
 | NF-8 | Footprint after uninstall | Data folder, PATH entry and scheduled task removed; nothing else left by ephget |
 
 ### Security
@@ -548,10 +549,14 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 
 ### M5 — Release
 
-- [ ] `install.ps1`: show the default shortcut locations for confirmation, accept a pasted folder instead of the Desktop, allow turning the Start Menu off; copy both exes, write `config.json`, add to PATH, register the task.
-- [ ] Release builds of `ephget.exe` and `ephgetw.exe` for x64 and arm64 with checksums.
+- [x] `install.ps1`: show the default shortcut locations for confirmation, accept a pasted folder instead of the Desktop, allow turning the Start Menu off; verify the download, copy both exes, write `config.json`, add to PATH, register the task. Update by running it again.
+- [x] Release workflow: `ephget.exe` and `ephgetw.exe` for x64 with checksums, on pushing a `v*` tag. arm64 waits until it can be tested. It hasn't run yet.
+- [x] `ephget version`.
+- [x] Third-party notices.
+- [x] A licence for ephget itself: GPL-3.0-or-later.
+- [ ] ephget's own generic icon for stubs. They currently show the default exe icon until first run.
 - [ ] Code signing: evaluate free options for open-source projects before release.
-- [ ] README with install line, commands and the lifecycle diagram.
+- [x] README with install line, commands and the lifecycle diagram.
 - [ ] Optional: a WinGet manifest for ephget itself.
 
 **Done when:** the one-line install works on clean Windows 10 and Windows 11 VMs.
