@@ -290,7 +290,7 @@ This can't catch a working URL that serves the wrong file, which only downloadin
 
 ### Website
 
-Each build also deploys `site/` to GitHub Pages, at `https://dryd33n.github.io/ephget/`: the install line and a searchable catalog on one static page, with no framework. It reads `site-index.json`, built in the same run, which adds each app's homepage and licence to what the client's index holds. Pages serves that file from the page's own domain, because a browser can't read a release asset from another site.
+Each build also deploys `site/` to GitHub Pages, at `https://ephget.dryd3n.ca/`: the install line and a searchable catalog on one static page, with no framework. It reads `site-index.json`, built in the same run, which adds each app's homepage and licence to what the client's index holds. Pages serves that file from the page's own domain, because a browser can't read a release asset from another site.
 
 Catalog text comes from third-party manifests, so the indexer keeps only `http` and `https` homepages, the page only ever inserts catalog text as plain text, and its content security policy stops anything loading from elsewhere.
 

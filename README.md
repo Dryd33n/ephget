@@ -8,7 +8,7 @@ Some apps you only need once or rarely: a disk utility, a file converter, a one-
 
 > **Status: early pre-release.** v0.1.1 hasn't yet been tested on a clean machine, so expect rough edges.
 
-**[Browse the app catalog](https://dryd33n.github.io/ephget/)**
+**[Browse the app catalog](https://ephget.dryd3n.ca/)**
 
 ## Install
 
