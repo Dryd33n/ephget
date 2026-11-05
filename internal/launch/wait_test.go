@@ -65,6 +65,56 @@ func TestWaitCoversAChainOfHandoffs(t *testing.T) {
 	}
 }
 
+// An app started through a short path must still count as inside its long-named
+// folder, or it would look closed while it's open.
+func TestRunningSeesAnAppStartedThroughAShortPath(t *testing.T) {
+	exe, logFile := buildTestApp(t)
+	dir := filepath.Join(filepath.Dir(exe), "a folder with a long name")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(dir, "testapp.exe")
+	if err := os.Rename(exe, moved); err != nil {
+		t.Fatal(err)
+	}
+	long, err := syscall.UTF16PtrFromString(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]uint16, 1024)
+	n, err := syscall.GetShortPathName(long, &buf[0], uint32(len(buf)))
+	if err != nil || n == 0 {
+		t.Skipf("no short names on this volume: %v", err)
+	}
+	short := syscall.UTF16ToString(buf[:n])
+	if strings.EqualFold(short, moved) {
+		t.Skip("no short names on this volume")
+	}
+	t.Setenv("TESTAPP_LOG", logFile)
+	t.Setenv("TESTAPP_MILLIS", "8000")
+	cmd := exec.Command(short)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	time.Sleep(300 * time.Millisecond)
+	if !Running(dir) {
+		t.Errorf("not seen from the long name; started as %s", short)
+	}
+	if !Running(filepath.Dir(short)) {
+		t.Errorf("not seen from the short name; started as %s", short)
+	}
+}
+
+func TestLongPath(t *testing.T) {
+	if got := longPath(`C:\no-tilde\here.exe`); got != `C:\no-tilde\here.exe` {
+		t.Errorf("changed a plain path: %q", got)
+	}
+	if got := longPath(`C:\missing~1\gone.exe`); got != `C:\missing~1\gone.exe` {
+		t.Errorf("changed a path that doesn't exist: %q", got)
+	}
+}
+
 func TestWaitIgnoresOtherFolders(t *testing.T) {
 	exe, logFile := buildTestApp(t)
 	t.Setenv("TESTAPP_LOG", logFile)

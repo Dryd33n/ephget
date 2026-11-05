@@ -21,7 +21,16 @@ func TestCreateAndReadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(got.Target, target) || got.Arguments != want.Arguments || got.Description != "ephget:vlc" {
+	// Windows may store the long form of a short path, so compare what they point at.
+	gotTarget, err := filepath.EvalSymlinks(got.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(gotTarget, wantTarget) || got.Arguments != want.Arguments || got.Description != "ephget:vlc" {
 		t.Fatalf("%+v", got)
 	}
 	if _, err := Read(filepath.Join(dir, "missing.lnk")); err == nil {

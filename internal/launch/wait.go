@@ -163,7 +163,20 @@ func (s *scanner) scan() (scanResult, error) {
 func (s *scanner) inFolder(h syscall.Handle) bool {
 	size := uint32(len(s.image))
 	ok, _, _ := procQueryFullProcessImageNameW.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&s.image[0])), uintptr(unsafe.Pointer(&size)))
-	return ok != 0 && strings.HasPrefix(strings.ToLower(syscall.UTF16ToString(s.image[:size])), s.prefix)
+	return ok != 0 && strings.HasPrefix(strings.ToLower(longPath(syscall.UTF16ToString(s.image[:size]))), s.prefix)
+}
+
+// longPath undoes 8.3 names. Windows reports a process's path as it was started, so
+// one started through C:\Users\RUNNER~1 wouldn't match the long form of its folder.
+func longPath(path string) string {
+	if !strings.Contains(path, "~") {
+		return path
+	}
+	long, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path // it has exited, which is for the caller to notice
+	}
+	return long
 }
 
 // exited catches a process that has died but is still listed. Waiting on it would
