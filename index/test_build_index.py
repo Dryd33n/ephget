@@ -2,11 +2,14 @@
 import contextlib
 import gzip
 import hashlib
+import http.server
 import io
 import json
 import shutil
+import socket
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -158,7 +161,6 @@ class Scripts(unittest.TestCase):
             'Copy-Item "$env:APPDATA\\vlc\\*" "$dir\\portable" -Recurse -Force',
             'Copy-Item "$persist_dir\\*" "$dir" -Include \'a.ini\'',
             'Copy-Item -Recurse "$dir\\plugins.original\\*" "$dir\\plugins\\" -Force',
-            'Copy-Item "$dir\\portable.ini.template" "$dir\\portable.ini" -Force',
             'Move-Item "$dir\\portable\\a.ini" "$dir\\portable\\vlc"',
             'if (Test-Path "$bucketsdir\\extras\\scripts\\app\\$_.reg") {',
             "Write-Host 'Migrating settings to the Scoop persist folder'",
@@ -387,6 +389,173 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(second["apps"]["a"]["package"]["version"], "2.0")
         self.assertEqual(second["apps"]["b"], first["apps"]["b"])
 
+
+
+class PortableMode(unittest.TestCase):
+    def test_scripts_that_switch_it_on_are_excluded(self):
+        for script in (
+            ['New-Item "$dir\\portable_mode.txt" -ItemType File -Force | Out-Null'],
+            ['Set-Content -Value $null -Path "$dir\\portable.txt"'],
+            ['if (!(Test-Path "$persist_dir\\.portable")) { Add-Content "$dir\\.portable" "" }'],
+            ['ensure "$dir\\portable\\vlc" | Out-Null'],
+            ["Set-Content \"$dir\\$CFG\" @('[config]', 'portable_mode = true') -Encoding Ascii"],
+            ['Copy-Item "$dir\\portable.ini.template" "$dir\\portable.ini" -Force'],
+            ["$c = (Get-Content \"$dir\\a.ini\").Replace('StoreToEXEPath=false', 'StoreToEXEPath=true')"],
+            ["info '[Portable Mode] Configuring profiles...'", "'{}' | Set-Content -Path \"$dir\\profiles.config\""],
+        ):
+            with self.subTest(script=script):
+                self.assertEqual(tier(*script), ("portable", None))
+
+    def test_it_outranks_a_rename(self):
+        script = ['Get-Item "$dir\\app-*.exe" | Rename-Item -NewName "App.exe"', 'New-Item "$dir\\.portable" | Out-Null']
+        self.assertEqual(tier(*script)[0], "portable")
+
+    def test_migrating_old_settings_is_not_portable_mode(self):
+        for script in (
+            ["info '[Portable Mode] Copying user data...'", 'Move-Item "$env:APPDATA\\X\\*" "$persist_dir\\data"'],
+            ['Write-Host "Move config from non-portable version..."', 'Copy-Item -Path $env:AppData\\X\\* -Destination "$persist_dir\\data"'],
+            ["info '[Portable Mode]: Copying settings...'", 'Copy-Item "$env:AppData\\X\\s.xaml" "$dir"'],
+            ['Rename-Item "$dir\\App-Portable-1.exe" "App.exe"'],
+        ):
+            with self.subTest(script=script):
+                self.assertNotEqual(tier(*script)[0], "portable")
+
+    def test_blocker_is_reported(self):
+        self.assertEqual(blockers(pre_install=['New-Item "$dir\\portable.txt" | Out-Null']), ["portable-mode-needs-script"])
+
+
+class Referer(unittest.TestCase):
+    def test_matches_the_client(self):
+        for url, want in {
+            "https://host.example/a%20b/tool.zip?x=1#/dl.zip": "https://host.example/a%20b/",
+            "http://user:secret@host.example:8080/tool.zip": "http://host.example:8080/",
+            "https://downloads.sourceforge.net/project/tool/tool.zip": None,
+            "https://portableapps.com/downloads/tool.zip": None,
+            "https://notsourceforge.net/tool.zip": "https://notsourceforge.net/",
+            "https://host.example": None,
+        }.items():
+            with self.subTest(url=url):
+                self.assertEqual(bi.referer_for(url), want)
+
+
+class _Handler(http.server.BaseHTTPRequestHandler):
+    seen = []
+
+    def do_GET(self):
+        type(self).seen.append((self.path, self.headers.get("Referer"), self.headers.get("User-Agent")))
+        self.send_response({"/ok.zip": 200, "/gone.zip": 404, "/removed.zip": 410, "/busy.zip": 503, "/no.zip": 403}.get(self.path, 200))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class Probe(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_reports_each_status(self):
+        for path, want in {"/ok.zip": 200, "/gone.zip": 404, "/removed.zip": 410, "/busy.zip": 503, "/no.zip": 403}.items():
+            self.assertEqual(bi.probe(self.base + path), want)
+
+    def test_no_answer_is_none(self):
+        with socket.socket() as s:  # a port nothing listens on
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        self.assertIsNone(bi.probe(f"http://127.0.0.1:{port}/x.zip", timeout=2))
+        self.assertIsNone(bi.probe("not a url"))
+
+    def test_sends_what_the_client_sends_without_the_fragment(self):
+        _Handler.seen.clear()
+        bi.probe(self.base + "/ok.zip#/dl.zip")
+        path, referer, agent = _Handler.seen[-1]
+        self.assertEqual(path, "/ok.zip")
+        self.assertEqual(referer, self.base + "/")
+        self.assertIn("ephget-index", agent)
+
+
+def fake_probe(statuses):
+    return lambda url: statuses[url]
+
+
+class DownloadChecks(unittest.TestCase):
+    def run_check(self, statuses, seen=None, today="2026-11-05"):
+        return bi.check_downloads(set(statuses), seen or {}, today, probe=fake_probe(statuses))
+
+    def test_gone_needs_two_different_days(self):
+        statuses = {"u": 404}
+        day1 = self.run_check(statuses)
+        self.assertEqual(day1["u"]["misses"], 1)
+        self.assertEqual(self.run_check(statuses, day1)["u"]["misses"], 1, "a second run the same day counted")
+        day2 = self.run_check(statuses, day1, "2026-11-06")
+        self.assertEqual(day2["u"]["misses"], 2)
+
+    def test_recovery_clears_misses(self):
+        day1 = self.run_check({"u": 404})
+        self.assertEqual(self.run_check({"u": 200}, day1, "2026-11-06")["u"]["misses"], 0)
+
+    def test_temporary_failures_do_not_count(self):
+        for status in (403, 500, 503, 522, 200):
+            self.assertEqual(self.run_check({"u": status})["u"]["misses"], 0, status)
+
+    def test_no_answer_leaves_the_record_alone(self):
+        seen = {"u": {"checked": "2026-11-01", "misses": 1}}
+        self.assertEqual(self.run_check({"u": None}, seen), seen)
+
+    def test_a_mass_failure_is_ignored(self):
+        statuses = {f"u{i}": 404 for i in range(30)}
+        self.assertEqual(self.run_check(statuses), {})
+
+    def test_a_few_failures_among_many_count(self):
+        statuses = {f"u{i}": 200 for i in range(30)} | {"gone": 404}
+        self.assertEqual(self.run_check(statuses)["gone"]["misses"], 1)
+
+    def test_forgets_urls_no_longer_used(self):
+        seen = {"old": {"checked": "2026-11-01", "misses": 0}}
+        self.assertNotIn("old", self.run_check({"u": 200}, seen))
+
+    def test_budget_leaves_the_rest_for_later(self):
+        records = bi.check_downloads({"a", "b"}, {}, "2026-11-05", probe=lambda url: 200, budget=-1)
+        self.assertEqual(records, {})
+
+    def test_order_new_then_suspect_then_oldest(self):
+        seen = {
+            "fresh": {"checked": "2026-11-04", "misses": 0},
+            "old": {"checked": "2026-10-01", "misses": 0},
+            "suspect": {"checked": "2026-11-04", "misses": 1},
+            "today": {"checked": "2026-11-05", "misses": 1},
+        }
+        chosen = bi.choose_urls({"new", *seen}, seen, "2026-11-05", rotation=1)
+        self.assertEqual(chosen, ["new", "suspect", "old"])
+
+    def test_drop_dead(self):
+        records = {"dead": {"misses": 2}, "suspect": {"misses": 1}, "ok": {"misses": 0}}
+        inst = lambda url: {"url": url, "arch": "x64"}
+        packages = [
+            {"id": "gone", "installers": [inst("dead")]},
+            {"id": "partial", "installers": [inst("dead"), inst("ok")]},
+            {"id": "suspect", "installers": [inst("suspect")]},
+            {"id": "unknown", "installers": [inst("never-checked")]},
+        ]
+        kept, dropped = bi.drop_dead(packages, records)
+        self.assertEqual(dropped, ["gone"])
+        self.assertEqual([p["id"] for p in kept], ["partial", "suspect", "unknown"])
+        self.assertEqual(kept[0]["installers"], [inst("ok")])
+        self.assertEqual(len(packages[1]["installers"]), 2, "changed the state saved for next time")
+
+
+class BucketChoice(unittest.TestCase):
+    def test_nirsoft_is_out(self):
+        self.assertNotIn("Nirsoft", bi.BUCKETS)
 
 if __name__ == "__main__":
     unittest.main()

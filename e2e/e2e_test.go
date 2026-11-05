@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/index"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/index"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
 )
 
 type env struct {
@@ -48,10 +48,10 @@ func build(t *testing.T, out string, ldflags string, pkg string) {
 func setup(t *testing.T) *env {
 	t.Helper()
 	e := &env{t: t, bin: t.TempDir(), home: t.TempDir(), stubs: t.TempDir(), logFile: filepath.Join(t.TempDir(), "log.txt")}
-	build(t, filepath.Join(e.bin, "ephget.exe"), "-s -w", "github.com/Dryd33n/ephget/cmd/ephget")
-	build(t, filepath.Join(e.bin, "ephgetw.exe"), "-s -w -H=windowsgui", "github.com/Dryd33n/ephget/cmd/ephgetw")
+	build(t, filepath.Join(e.bin, "ephget.exe"), "-s -w", "github.com/Ephget/ephget/cmd/ephget")
+	build(t, filepath.Join(e.bin, "ephgetw.exe"), "-s -w -H=windowsgui", "github.com/Ephget/ephget/cmd/ephgetw")
 	appExe := filepath.Join(t.TempDir(), "testapp.exe")
-	build(t, appExe, "-s -w -H=windowsgui", "github.com/Dryd33n/ephget/internal/testapp")
+	build(t, appExe, "-s -w -H=windowsgui", "github.com/Ephget/ephget/internal/testapp")
 
 	content, err := os.ReadFile(appExe)
 	if err != nil {
@@ -261,8 +261,8 @@ func TestFetchFailureExitsNonZeroAndLeavesStub(t *testing.T) {
 func TestFetchRunsAttachedToARealConsole(t *testing.T) {
 	e := setup(t)
 	bin := t.TempDir()
-	build(t, filepath.Join(bin, "ephgetw.exe"), "-s -w -H=windowsgui", "github.com/Dryd33n/ephget/cmd/ephgetw")
-	build(t, filepath.Join(bin, "ephget.exe"), "-s -w", "github.com/Dryd33n/ephget/internal/testapp")
+	build(t, filepath.Join(bin, "ephgetw.exe"), "-s -w -H=windowsgui", "github.com/Ephget/ephget/cmd/ephgetw")
+	build(t, filepath.Join(bin, "ephget.exe"), "-s -w", "github.com/Ephget/ephget/internal/testapp")
 	t.Setenv("TESTAPP_MODE", "console")
 	exec.Command(filepath.Join(bin, "ephgetw.exe"), "run", "testapp").Run()
 	data, err := os.ReadFile(e.logFile)
@@ -837,7 +837,7 @@ func TestPipedOutputIsPlain(t *testing.T) {
 }
 
 func TestEphgetwHasNoNetworkCode(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "github.com/Dryd33n/ephget/cmd/ephgetw").CombinedOutput()
+	out, err := exec.Command("go", "list", "-deps", "github.com/Ephget/ephget/cmd/ephgetw").CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

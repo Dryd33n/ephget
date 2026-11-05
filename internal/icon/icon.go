@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Dryd33n/ephget/internal/fsutil"
+	"github.com/Ephget/ephget/internal/fsutil"
 )
 
 const (

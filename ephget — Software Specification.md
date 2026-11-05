@@ -36,7 +36,7 @@ Many apps are needed once or rarely: a disk utility, a file converter, a one-off
 | Stub shortcut | A `.lnk` that runs `ephgetw.exe run <id>` with the app's settings; exists whether or not the app is downloaded. |
 | App ID | The Scoop manifest name, e.g. `vlc`. |
 | Bucket | A Git repository of Scoop app manifests, e.g. `ScoopInstaller/Extras`. |
-| Index | The prebuilt, compressed list of eligible apps published by ephget-index. |
+| Index | The prebuilt, compressed list of eligible apps published by the index pipeline. |
 | Eligible app | A GUI app in a surveyed bucket that meets the rules in section 6. |
 | Persist list | The files and folders a Scoop manifest says hold the app's settings inside its own folder. |
 | TTL | Time-to-live: how long after the app was last closed it is kept before removal. Default 7 days; minimum 1 hour. |
@@ -192,7 +192,7 @@ ephget has two parts: an index pipeline that runs in the cloud, and the client o
 ```mermaid
 flowchart TD
     subgraph cloud["GitHub (daily)"]
-        buckets["Scoop buckets"] --> action["ephget-index Action"]
+        buckets["Scoop buckets"] --> action["Index Action"]
         action --> index["index.json.gz release"]
     end
 
@@ -211,14 +211,14 @@ flowchart TD
 
 The client only talks to the internet to refresh the index and to download an app that isn't cached, and only `ephget.exe` does either. `ephgetw.exe` never touches the network; a cached launch touches nothing but `state.json`.
 
-## 6. Index pipeline (ephget-index)
+## 6. Index pipeline
 
-A scheduled GitHub Action in a separate `ephget-index` repository builds the index once a day and publishes it as a release asset. Clients never read Scoop's buckets directly.
+A scheduled GitHub Action builds the index once a day from the code in `index/`, and publishes it as a release asset of this repository. Clients never read Scoop's buckets directly.
 
 ### Source
 
-- Shallow clones of the `ScoopInstaller` buckets `Main`, `Extras`, `Nirsoft`, `Sysinternals` and `Games`, cached between runs. If two buckets have the same app ID, the first in that order wins.
-- `Versions`, `Nonportable`, `PHP`, `Java` and the nerd-fonts bucket are excluded: they hold old releases, installers, runtimes and fonts rather than current desktop apps.
+- Shallow clones of the `ScoopInstaller` buckets `Main`, `Extras`, `Sysinternals` and `Games`, cached between runs. If two buckets have the same app ID, the first in that order wins.
+- `Versions`, `Nonportable`, `PHP`, `Java` and the nerd-fonts bucket are excluded: they hold old releases, installers, runtimes and fonts rather than current desktop apps. `Nirsoft` is excluded too: its suites and password tools trip antivirus, which reflects on ephget.
 - Each run diffs against the previous commit and re-parses only changed manifests; results for unchanged manifests carry over from a state file cached with the clones. A change to the indexer's code, a missing state file or a missing old commit causes a full parse, which takes seconds.
 
 ### Eligibility rules
@@ -230,6 +230,7 @@ An app is included if its manifest has an x64, arm64 or architecture-independent
 3. **Unpackable file:** a `.zip`, a real `.7z`, or an exe that runs as it is. Setup programs are excluded, including exes Scoop opens as 7z (`#/dl.7z`), `innosetup` apps and `.msi` files. So are manifests using `extract_to`, or more than one `extract_dir`.
 4. **No dependencies:** the manifest has no `depends` field.
 5. **No script needed:** see below.
+6. **File still exists:** see Download checks.
 
 **Manifest scripts are never run.** The indexer classifies each manifest's `installer`, `pre_install` and `post_install` scripts:
 
@@ -238,9 +239,10 @@ An app is included if its manifest has an x64, arm64 or architecture-independent
 | None | Included. |
 | Only prepares settings: creates config files, copies old settings, removes spare files | Skipped; included. |
 | One simple rename of the exe to the launch name | Replaced by the installer's `rename` field; included. |
+| Switches on portable mode: creates or edits a marker such as `portable.txt` | Excluded. Without it the app would quietly keep its settings outside its folder, which is the opposite of what ephget promises. |
 | Runs a setup program, unpacks files, starts programs, edits the registry or downloads anything; moves or renames other program files; an `installer` with no script | Excluded. |
 
-Moving or copying files out of `<name>.original` folders, the persist folder or user folders counts as preparing settings. Copying a wildcard or an exe or DLL into the app folder counts as moving program files. The classification uses keyword matching, so it can misjudge a script. The client checks for the exe after extraction and fails with a clear error if it's missing. Scripts that are skipped can leave different defaults: for example, an app's update check may stay on.
+Moving or copying files out of `<name>.original` folders, the persist folder or user folders counts as preparing settings, even into a folder named `portable`: that is migrating old settings, not switching the mode on. Copying a wildcard or an exe or DLL into the app folder counts as moving program files. The classification uses keyword matching, so it can misjudge a script. The client checks for the exe after extraction and fails with a clear error if it's missing. Scripts that are skipped can leave different defaults: for example, an app's update check may stay on.
 
 ### Schema
 
@@ -274,12 +276,23 @@ Manifests are untrusted, so the indexer also excludes apps whose `id` or `versio
 
 `url` keeps any Scoop `#/name` fragment, which HTTP clients don't send. For `type: exe`, the client saves the download as `exe`: the indexer has checked that this is the name the file would end up with, so `rename` needs no further action there. `extract_dir` is always null for that type.
 
+### Download checks
+
+A manifest's URL can die long before its manifest changes, and the user would otherwise find out on their first click. So the build asks each new or changed URL, every URL under suspicion and 200 others a day whether its file still exists, reading only the response's headers. All of them get looked at over about a week.
+
+- An installer is dropped once its URL has answered 404 or 410 on two different days. An app with no installers left is excluded as `dead-url`.
+- Timeouts, TLS errors, 403s and 5xx responses don't count. They're often temporary, or a host refusing GitHub's servers.
+- If over 10% of a run's checks say "gone", the run counts for nothing: that's an outage, not hundreds of dead apps.
+- Requests send the same `Referer` as the client (section 7), so a host that needs one doesn't look dead. The user agent names ephget honestly.
+
+This can't catch a working URL that serves the wrong file, which only downloading and hashing would show. Those apps fail verification on first click.
+
 ### Publishing
 
-- Artifact: `index.json.gz` attached to a rolling `latest` release of `Dryd33n/ephget-index`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices.
-- Client URL: `https://github.com/Dryd33n/ephget-index/releases/latest/download/index.json.gz`.
+- Artifact: `index.json.gz` attached to a rolling `index` release of `Ephget/ephget`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices. It is never marked as the latest release, because `releases/latest` is for ephget itself.
+- Client URL: `https://github.com/Ephget/ephget/releases/download/index/index.json.gz`.
 - Schema version in a top-level wrapper (`{"schema": 1, "generated": "<ISO time>", "packages": [...]}`) so clients can refuse an index format they don't understand.
-- Target size: under 300 KB compressed. The first build, with 1,584 apps, came to about 216 KB. The build fails and publishes nothing if the index is over 300 KB, has fewer than 1,000 apps, or has an entry with no URL, hash or exe path.
+- Target size: under 300 KB compressed. A build with 1,259 apps came to about 179 KB. The build fails and publishes nothing if the index is over 300 KB, has fewer than 1,000 apps, or has an entry with no URL, hash or exe path.
 
 ## 7. Client design
 
@@ -354,7 +367,7 @@ A cached launch performs no network access and reads no index. While waiting, th
 ### Download path (`ephget fetch <id>`)
 
 1. Load the index (refresh first if older than 24 h) and pick the installer for the machine's architecture, preferring native over x64 emulation on arm64.
-2. Download to `tmp\` with progress shown (section 3); verify SHA256. On mismatch, delete and fail. Like Scoop, requests send the file's folder as the `Referer`, except to SourceForge and PortableApps: Nirsoft and other hosts answer with a web page if it's missing, and those two do if it's present.
+2. Download to `tmp\` with progress shown (section 3); verify SHA256. On mismatch, delete and fail. Like Scoop, requests send the file's folder as the `Referer`, except to SourceForge and PortableApps: some hosts answer with a web page if it's missing, and those two do if it's present.
 3. Extract (zip, 7z) or move (exe) into `apps\<id>\<version>\`, using `extract_dir` as the root if set and applying `rename` if set. If the launch exe isn't there, delete the files and fail. Clear the Mark of the Web; extract the exe's icon to `icons\<id>.ico` and update the shortcut's icon.
 4. Move any saved settings from `prefs\<id>\` back into the app folder. Record the version and path in `state.json` and exit 0. On failure, show the error and a retry prompt; if the user declines, exit non-zero.
 
@@ -441,7 +454,7 @@ Lightweight is the primary design constraint: when no ephget app is open, ephget
 - Every download is verified against the SHA256 from the Scoop manifest before extraction; a mismatch aborts and deletes the file.
 - Scripts in manifests are never run, and never included in the index.
 - Manifests choose their download hosts, and some use third-party mirrors. The hash proves the file matches the manifest, not that it came from the publisher.
-- Downloads go only to URLs present in the index; the index is fetched over HTTPS from the ephget-index releases.
+- Downloads go only to URLs present in the index; the index is fetched over HTTPS from this project's releases.
 - Mark of the Web is cleared only after hash verification succeeds.
 - Zip extraction rejects entries with absolute paths or `..` components (zip-slip).
 - The index itself is unsigned in v1. Hash checks protect against a tampered download or mirror, not against a compromised index, which controls both the URL and the hash. Signing the index is the fix if this matters later.
@@ -452,16 +465,16 @@ Lightweight is the primary design constraint: when no ephget app is open, ephget
 
 - **Settings detection is best-effort:** with keep preferences off, settings the footprint missed (shared folders, unrelated names, later runs) stay behind.
 - **Launches that bypass the shortcut** aren't tracked, so `last_closed` isn't updated. The reaper still refreshes it whenever it finds the app running, so the worst case is an early re-download.
-- **Catalog coverage** leaves out apps that need a setup program, an unfixable script or a non-SHA256 hash, including GIMP, 7-Zip, KeePass, Krita, Audacity, CrystalDiskInfo, Firefox and Everything. Apps whose shortcut passes arguments are also out, including Brave and other Chromium builds that set a profile folder this way. Adding an `args` field to the schema could bring some back.
+- **Catalog coverage** leaves out apps that need a setup program, an unfixable script or a non-SHA256 hash, including GIMP, 7-Zip, KeePass, Krita, Audacity, CrystalDiskInfo, Firefox and Everything. Apps that need a script to switch on portable mode are out too, including VLC, OBS Studio, Windows Terminal and HandBrake. `docs/expanding-the-catalog.md` covers ways to bring more back. Apps whose shortcut passes arguments are also out, including Brave and other Chromium builds that set a profile folder this way. Adding an `args` field to the schema could bring some back.
 - **Skipped scripts** can change an app's defaults, and the script classification is keyword-based, so some included apps may fail or behave differently.
 - **Reliance on Scoop's buckets:** ephget doesn't use Scoop itself, but its catalog depends on the buckets continuing to be updated. If they stop, the index goes stale and old download URLs start failing.
-- **arm64:** only 213 of the 1,584 eligible apps have an eligible arm64 build. Others that have no architecture-independent build run under x64 emulation.
+- **arm64:** only 205 of the 1,259 eligible apps have an eligible arm64 build. Others that have no architecture-independent build run under x64 emulation.
 - **SmartScreen** may still warn on unsigned executables even after Mark of the Web is cleared, depending on system policy.
 
 ### Open questions
 
-- [x] How many eligible apps does the catalog contain? 1,584 GUI apps in Scoop's buckets (M1; the M0 survey's rougher rules gave 1,663).
-- [x] Is it fine to redistribute manifest data from each bucket? Yes. `Main` and `Extras` use the Unlicense, `Games` uses CC0 and needs nothing further, and `Nirsoft` and `Sysinternals` use MIT, whose notices ship in `NOTICE.md`.
+- [x] How many eligible apps does the catalog contain? 1,259 GUI apps in Scoop's buckets, after dropping `Nirsoft` and apps that need a script for portable mode (M1 gave 1,584; the M0 survey's rougher rules gave 1,663).
+- [x] Is it fine to redistribute manifest data from each bucket? Yes. `Main` and `Extras` use the Unlicense, `Games` uses CC0 and needs nothing further, and `Sysinternals` uses MIT, whose notice ships in `NOTICE.md`.
 - [ ] How often does skipping a script actually break an app? Answered by the sample test in M2.
 
 ## 10. Milestones
@@ -472,7 +485,7 @@ Each milestone ends with a usable result; no dates are set yet.
 
 Answers the one go/no-go question: are there enough useful portable apps in the catalog?
 
-- [ ] Create `Dryd33n/ephget` and `Dryd33n/ephget-index` repos.
+- [ ] Create the `Ephget/ephget` repo, which holds both the client and the index pipeline.
 - [x] Survey WinGet: 3,682 of 15,949 packages are portable, but utilities like CPU-Z, HWiNFO and WizTree are installer-only there, so it was dropped as the catalog.
 - [x] Survey Scoop's buckets and apply the eligibility rules (section 6): 1,663 of 4,941 apps.
 - [x] Output the eligible count, breakdowns, and a CSV of eligible apps.
@@ -486,7 +499,8 @@ Answers the one go/no-go question: are there enough useful portable apps in the 
 - [x] Add per-architecture entries, `extract_dir`, `rename`, `persist` and the shortcut name to the index.
 - [x] Store each bucket's last processed commit; re-parse only manifests changed since (`git diff --name-only`).
 - [ ] GitHub Action on a daily schedule plus manual trigger, caching the clones between runs.
-- [x] Upload to the rolling `latest` release.
+- [x] Upload to the rolling `index` release.
+- [x] Check download URLs at index time, and drop apps whose files are gone.
 - [x] Fail the build if the index exceeds 300 KB or any entry lacks a URL, hash or exe path.
 - [x] Read the `Games` bucket licence; drop the bucket if it doesn't allow this use. It's CC0, so the bucket stays.
 

@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/paths"
 )
 
 const (

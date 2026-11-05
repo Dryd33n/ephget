@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Dryd33n/ephget/internal/fsutil"
-	"github.com/Dryd33n/ephget/internal/ttl"
+	"github.com/Ephget/ephget/internal/fsutil"
+	"github.com/Ephget/ephget/internal/ttl"
 )
 
 // Config holds the defaults for new apps.

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/fsutil"
-	"github.com/Dryd33n/ephget/internal/index"
-	"github.com/Dryd33n/ephget/internal/ui"
+	"github.com/Ephget/ephget/internal/fsutil"
+	"github.com/Ephget/ephget/internal/index"
+	"github.com/Ephget/ephget/internal/ui"
 )
 
 const (

@@ -12,9 +12,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Dryd33n/ephget/internal/launch"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/reap"
+	"github.com/Ephget/ephget/internal/launch"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/reap"
 )
 
 func main() {

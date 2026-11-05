@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/state"
 )
 
 var now = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)

@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/config"
-	"github.com/Dryd33n/ephget/internal/footprint"
-	"github.com/Dryd33n/ephget/internal/fsutil"
-	"github.com/Dryd33n/ephget/internal/lockfile"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
-	"github.com/Dryd33n/ephget/internal/ttl"
+	"github.com/Ephget/ephget/internal/config"
+	"github.com/Ephget/ephget/internal/footprint"
+	"github.com/Ephget/ephget/internal/fsutil"
+	"github.com/Ephget/ephget/internal/lockfile"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/ttl"
 )
 
 var (

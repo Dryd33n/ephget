@@ -18,14 +18,18 @@ jobs:
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: index
     steps:
       - uses: actions/checkout@v7
 
-      # Bucket clones and the per-manifest results. If the cache is ever lost, the
-      # next build clones again and parses everything, which takes under a minute.
+      # Bucket clones, the per-manifest results and the download checks. If the cache
+      # is ever lost, the next build clones again and parses everything, which takes
+      # under a minute, and the download checks start over.
       - uses: actions/cache/restore@v6
         with:
-          path: .cache
+          path: index/.cache
           key: buckets-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: buckets-
 
@@ -33,24 +37,26 @@ jobs:
         run: python3 -m unittest
 
       - name: Build
-        run: python3 -I build_index.py --update --buckets .cache/scoop --state .cache/state.json --out out
+        run: python3 -I build_index.py --update --check-urls --buckets .cache/scoop --state .cache/state.json --out out
 
       - uses: actions/cache/save@v6
         with:
-          path: .cache
+          path: index/.cache
           key: buckets-${{ github.run_id }}-${{ github.run_attempt }}
 
+      # The catalog has its own tag, and is never marked latest: releases/latest is
+      # for ephget itself, and the client asks for this release by name.
       - name: Publish to the rolling release
         run: |
-          if ! gh release view latest > /dev/null 2>&1; then
-            gh release create latest --latest --title "Latest index" \
+          if ! gh release view index > /dev/null 2>&1; then
+            gh release create index --latest=false --title "App catalog" \
               --notes "Rebuilt daily from Scoop's buckets. Sources and licences are in NOTICE.md."
           fi
           # One at a time with retries: GitHub can answer 500 while replacing an
           # asset, which would leave the index and its hash out of step.
           for file in out/index.json.gz out/index.json.gz.sha256 NOTICE.md; do
             for attempt in 1 2 3 4; do
-              gh release upload latest "$file" --clobber && break
+              gh release upload index "$file" --clobber && break
               if [ "$attempt" = 4 ]; then exit 1; fi
               sleep 15
             done
@@ -58,7 +64,7 @@ jobs:
 
       - name: Check what clients are served
         run: |
-          url=https://github.com/${{ github.repository }}/releases/latest/download
+          url=https://github.com/${{ github.repository }}/releases/download/index
           served=$(curl -fsSL "$url/index.json.gz" | sha256sum | cut -d' ' -f1)
           listed=$(curl -fsSL "$url/index.json.gz.sha256" | cut -d' ' -f1)
           built=$(cut -d' ' -f1 out/index.json.gz.sha256)
@@ -66,6 +72,6 @@ jobs:
           [ "$served" = "$built" ] && [ "$listed" = "$built" ]
 
       # GitHub disables scheduled workflows after 60 days without repository
-      # activity, which this repo would otherwise reach between client releases.
+      # activity, which this repo could otherwise reach between client releases.
       - name: Keep the schedule enabled
         run: gh workflow enable build-index.yml

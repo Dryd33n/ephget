@@ -17,17 +17,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/config"
-	"github.com/Dryd33n/ephget/internal/fetch"
-	"github.com/Dryd33n/ephget/internal/index"
-	"github.com/Dryd33n/ephget/internal/launch"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/reap"
-	"github.com/Dryd33n/ephget/internal/schedule"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
-	"github.com/Dryd33n/ephget/internal/ttl"
-	"github.com/Dryd33n/ephget/internal/ui"
+	"github.com/Ephget/ephget/internal/config"
+	"github.com/Ephget/ephget/internal/fetch"
+	"github.com/Ephget/ephget/internal/index"
+	"github.com/Ephget/ephget/internal/launch"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/reap"
+	"github.com/Ephget/ephget/internal/schedule"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/ttl"
+	"github.com/Ephget/ephget/internal/ui"
 )
 
 const (

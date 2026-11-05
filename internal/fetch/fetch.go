@@ -19,20 +19,22 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Dryd33n/ephget/internal/config"
-	"github.com/Dryd33n/ephget/internal/extract"
-	"github.com/Dryd33n/ephget/internal/fsutil"
-	"github.com/Dryd33n/ephget/internal/icon"
-	"github.com/Dryd33n/ephget/internal/index"
-	"github.com/Dryd33n/ephget/internal/lockfile"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
-	"github.com/Dryd33n/ephget/internal/ui"
+	"github.com/Ephget/ephget/internal/config"
+	"github.com/Ephget/ephget/internal/extract"
+	"github.com/Ephget/ephget/internal/fsutil"
+	"github.com/Ephget/ephget/internal/icon"
+	"github.com/Ephget/ephget/internal/index"
+	"github.com/Ephget/ephget/internal/lockfile"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/ui"
 )
 
 // IndexURL is where the catalog is published.
-const IndexURL = "https://github.com/Dryd33n/ephget-index/releases/latest/download/index.json.gz"
+//
+// It names its release by tag, not releases/latest, which will be ephget's own.
+const IndexURL = "https://github.com/Ephget/ephget/releases/download/index/index.json.gz"
 
 const userAgent = "ephget/0.1"
 
@@ -426,8 +428,8 @@ func record(store state.Store, layout paths.Layout, pkg *index.Package, inst *in
 	})
 }
 
-// refererFor returns the file's own folder, which is what Scoop sends. Nirsoft and
-// other hosts answer with a web page instead of the file if there is no Referer.
+// refererFor returns the file's own folder, which is what Scoop sends. Some hosts
+// answer with a web page or a 404 instead of the file if there is no Referer.
 // SourceForge and PortableApps are the opposite, as they are in Scoop: a Referer
 // gets the web page.
 func refererFor(rawURL string) string {

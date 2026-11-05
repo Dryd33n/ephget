@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/index"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/index"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
 )
 
 func zipOf(t *testing.T, files map[string]string) []byte {

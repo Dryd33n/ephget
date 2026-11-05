@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/Dryd33n/ephget/internal/footprint"
-	"github.com/Dryd33n/ephget/internal/launch"
-	"github.com/Dryd33n/ephget/internal/paths"
-	"github.com/Dryd33n/ephget/internal/reap"
-	"github.com/Dryd33n/ephget/internal/schedule"
-	"github.com/Dryd33n/ephget/internal/shortcut"
-	"github.com/Dryd33n/ephget/internal/state"
-	"github.com/Dryd33n/ephget/internal/ui"
+	"github.com/Ephget/ephget/internal/footprint"
+	"github.com/Ephget/ephget/internal/launch"
+	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Ephget/ephget/internal/reap"
+	"github.com/Ephget/ephget/internal/schedule"
+	"github.com/Ephget/ephget/internal/shortcut"
+	"github.com/Ephget/ephget/internal/state"
+	"github.com/Ephget/ephget/internal/ui"
 )
 
 const createNoWindow = 0x08000000

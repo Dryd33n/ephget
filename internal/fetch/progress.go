@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/Dryd33n/ephget/internal/ui"
+	"github.com/Ephget/ephget/internal/ui"
 )
 
 func newHash() hash.Hash { return sha256.New() }
