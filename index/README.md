@@ -5,7 +5,7 @@ four of Scoop's buckets, keeps the apps ephget can run without Scoop, and publis
 the result to the rolling `index` release:
 
 ```
-https://github.com/Ephget/ephget/releases/download/index/index.json.gz
+https://github.com/Dryd33n/ephget/releases/download/index/index.json.gz
 ```
 
 The eligibility rules and the schema are in section 6 of ephget's specification.

@@ -13,7 +13,7 @@ import (
 
 	"github.com/bodgit/sevenzip"
 
-	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/paths"
 )
 
 // entry is what the two archive formats have in common.

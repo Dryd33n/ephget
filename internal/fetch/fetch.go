@@ -19,22 +19,22 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Ephget/ephget/internal/config"
-	"github.com/Ephget/ephget/internal/extract"
-	"github.com/Ephget/ephget/internal/fsutil"
-	"github.com/Ephget/ephget/internal/icon"
-	"github.com/Ephget/ephget/internal/index"
-	"github.com/Ephget/ephget/internal/lockfile"
-	"github.com/Ephget/ephget/internal/paths"
-	"github.com/Ephget/ephget/internal/shortcut"
-	"github.com/Ephget/ephget/internal/state"
-	"github.com/Ephget/ephget/internal/ui"
+	"github.com/Dryd33n/ephget/internal/config"
+	"github.com/Dryd33n/ephget/internal/extract"
+	"github.com/Dryd33n/ephget/internal/fsutil"
+	"github.com/Dryd33n/ephget/internal/icon"
+	"github.com/Dryd33n/ephget/internal/index"
+	"github.com/Dryd33n/ephget/internal/lockfile"
+	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/shortcut"
+	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/ui"
 )
 
 // IndexURL is where the catalog is published.
 //
 // It names its release by tag, not releases/latest, which will be ephget's own.
-const IndexURL = "https://github.com/Ephget/ephget/releases/download/index/index.json.gz"
+const IndexURL = "https://github.com/Dryd33n/ephget/releases/download/index/index.json.gz"
 
 const userAgent = "ephget/0.1"
 

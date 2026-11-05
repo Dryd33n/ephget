@@ -14,7 +14,7 @@ func buildTestApp(t *testing.T) (exe, logFile string) {
 	t.Helper()
 	dir := t.TempDir()
 	exe = filepath.Join(dir, "testapp.exe")
-	out, err := exec.Command("go", "build", "-ldflags", "-H=windowsgui", "-o", exe, "github.com/Ephget/ephget/internal/testapp").CombinedOutput()
+	out, err := exec.Command("go", "build", "-ldflags", "-H=windowsgui", "-o", exe, "github.com/Dryd33n/ephget/internal/testapp").CombinedOutput()
 	if err != nil {
 		t.Fatalf("build testapp: %v\n%s", err, out)
 	}

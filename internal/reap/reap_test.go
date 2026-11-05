@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Ephget/ephget/internal/lockfile"
-	"github.com/Ephget/ephget/internal/paths"
-	"github.com/Ephget/ephget/internal/shortcut"
-	"github.com/Ephget/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/lockfile"
+	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/shortcut"
+	"github.com/Dryd33n/ephget/internal/state"
 )
 
 type fixture struct {

@@ -289,8 +289,8 @@ This can't catch a working URL that serves the wrong file, which only downloadin
 
 ### Publishing
 
-- Artifact: `index.json.gz` attached to a rolling `index` release of `Ephget/ephget`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices. It is never marked as the latest release, because `releases/latest` is for ephget itself.
-- Client URL: `https://github.com/Ephget/ephget/releases/download/index/index.json.gz`.
+- Artifact: `index.json.gz` attached to a rolling `index` release of `Dryd33n/ephget`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices. It is never marked as the latest release, because `releases/latest` is for ephget itself.
+- Client URL: `https://github.com/Dryd33n/ephget/releases/download/index/index.json.gz`.
 - Schema version in a top-level wrapper (`{"schema": 1, "generated": "<ISO time>", "packages": [...]}`) so clients can refuse an index format they don't understand.
 - Target size: under 300 KB compressed. A build with 1,259 apps came to about 179 KB. The build fails and publishes nothing if the index is over 300 KB, has fewer than 1,000 apps, or has an entry with no URL, hash or exe path.
 
@@ -377,7 +377,7 @@ For each entry in `state.json`:
 
 1. **Check for stubs.** If none of the recorded `shortcuts` exist, scan for the app's `ephget:<id>` marker (Finding stubs) in case the stub was moved but not yet clicked. If a stub is found, update its path; if none is, the user deleted the app: treat it as expired now and go to step 3.
 2. Skip it if it isn't cached, or if `now <= last_closed + ttl`. If `last_closed` is missing (the launcher was killed or the PC shut down with the app open), use `last_launched`. If both are missing (downloaded, but it never started), use the app folder's modified time.
-3. If `apps\<id>\` exists, try to rename it to `tmp\<id>.removing`. If the rename fails, the app is running: set `last_closed = now` and skip it. A pass tries once, so an open app can't hold it up.
+3. If `apps\<id>\` exists, try to rename it to `tmp\<id>.removing`. If the rename fails, the app is running: set `last_closed = now` and skip it. It retries for about a second, so a scanner briefly holding a file doesn't count as the app running, and an open app can't hold up the pass for long.
 4. If `keep_prefs` is on, move each `persist` item that exists out of the renamed folder into `prefs\<id>\`, even if the stubs are missing. If that fails, put the folder back and try again next pass. Delete the renamed folder. If `keep_prefs` is off, also delete each footprint entry that still exists and any `prefs\<id>\`.
 5. If the app was deleted by the user, drop the state entry and its icon. Otherwise keep the entry, minus the cache path, so the stub stays ready to relaunch.
 
@@ -485,7 +485,7 @@ Each milestone ends with a usable result; no dates are set yet.
 
 Answers the one go/no-go question: are there enough useful portable apps in the catalog?
 
-- [ ] Create the `Ephget/ephget` repo, which holds both the client and the index pipeline.
+- [ ] Create the `Dryd33n/ephget` repo, which holds both the client and the index pipeline.
 - [x] Survey WinGet: 3,682 of 15,949 packages are portable, but utilities like CPU-Z, HWiNFO and WizTree are installer-only there, so it was dropped as the catalog.
 - [x] Survey Scoop's buckets and apply the eligibility rules (section 6): 1,663 of 4,941 apps.
 - [x] Output the eligible count, breakdowns, and a CSV of eligible apps.

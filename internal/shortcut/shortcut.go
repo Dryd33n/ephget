@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/Ephget/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/paths"
 )
 
 var (

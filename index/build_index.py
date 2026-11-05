@@ -438,7 +438,7 @@ def scan_bucket(repo: Path, bucket: str, previous: dict | None) -> tuple[dict, i
 # is gone counts: timeouts, 403s and 5xx are often temporary, or a host refusing
 # GitHub's servers, and must not cost an app its place.
 
-USER_AGENT = "ephget-index (+https://github.com/Ephget/ephget)"
+USER_AGENT = "ephget-index (+https://github.com/Dryd33n/ephget)"
 GONE_STATUSES = {404, 410}
 # Answers on two different days, so one bad day at a host doesn't drop an app.
 DEAD_AFTER_MISSES = 2

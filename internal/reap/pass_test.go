@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Ephget/ephget/internal/paths"
-	"github.com/Ephget/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/state"
 )
 
 var now = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
@@ -293,6 +293,25 @@ func TestPassTreatsAnOpenFileAsRunning(t *testing.T) {
 	}
 	if e.LastClosed == nil || !e.LastClosed.Equal(now) {
 		t.Fatalf("clock not restarted: %+v", e.LastClosed)
+	}
+}
+
+// Windows Defender often holds new files for a moment, which isn't an open app.
+func TestPassWaitsOutABriefHoldOnTheFolder(t *testing.T) {
+	f := newFixture(t)
+	f.cachedEntry(t, "tool", "1h", true, 2*time.Hour)
+	held, err := os.Open(f.appFile("tool", "app.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := time.AfterFunc(300*time.Millisecond, func() { held.Close() })
+	defer released.Stop()
+	if err := Pass(f.layout, now); err != nil {
+		t.Fatal(err)
+	}
+	gone(t, f.layout.AppRoot("tool"))
+	if e := f.get(t, "tool"); e == nil || e.Path != "" {
+		t.Fatalf("%+v", e)
 	}
 }
 

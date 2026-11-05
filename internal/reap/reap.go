@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Ephget/ephget/internal/config"
-	"github.com/Ephget/ephget/internal/footprint"
-	"github.com/Ephget/ephget/internal/fsutil"
-	"github.com/Ephget/ephget/internal/lockfile"
-	"github.com/Ephget/ephget/internal/paths"
-	"github.com/Ephget/ephget/internal/shortcut"
-	"github.com/Ephget/ephget/internal/state"
-	"github.com/Ephget/ephget/internal/ttl"
+	"github.com/Dryd33n/ephget/internal/config"
+	"github.com/Dryd33n/ephget/internal/footprint"
+	"github.com/Dryd33n/ephget/internal/fsutil"
+	"github.com/Dryd33n/ephget/internal/lockfile"
+	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/shortcut"
+	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/ttl"
 )
 
 var (
@@ -28,6 +28,11 @@ var (
 	ErrRunning = errors.New("app is running")
 	// ErrDownloading means a fetch holds the app's lock, so nothing was changed.
 	ErrDownloading = errors.New("app is being downloaded")
+)
+
+const (
+	renameAttempts   = 6
+	renameRetryDelay = 200 * time.Millisecond
 )
 
 // ScanFolders lists where to look for stubs that aren't at their recorded paths.
@@ -229,9 +234,7 @@ func reapApp(layout paths.Layout, store state.Store, id string, now time.Time, s
 		if err := fsutil.RemoveAll(trash); err != nil {
 			return err
 		}
-		// One attempt: a false "running" only waits for the next pass, while the
-		// retries would hold up every pass for as long as the app stays open.
-		if err := os.Rename(dir, trash); err != nil {
+		if err := renameIfFree(dir, trash); err != nil {
 			return updateEntry(store, id, func(e *state.Entry) { e.LastClosed = &now })
 		}
 	}
@@ -271,6 +274,23 @@ func reapApp(layout paths.Layout, store state.Store, id string, now time.Time, s
 		return err
 	}
 	return fsutil.RemoveAll(trash)
+}
+
+// renameIfFree moves dir unless something is using it. A failure restarts the app's
+// whole TTL, so a scanner briefly holding a new file mustn't look like a running app.
+// But an open app fails every time, and fsutil.Rename's several seconds of retries
+// would hold up each pass, so this gives up much sooner.
+func renameIfFree(from, to string) error {
+	var err error
+	for attempt := range renameAttempts {
+		if attempt > 0 {
+			time.Sleep(renameRetryDelay)
+		}
+		if err = os.Rename(from, to); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func updateEntry(store state.Store, id string, change func(*state.Entry)) error {

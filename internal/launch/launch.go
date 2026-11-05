@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Ephget/ephget/internal/config"
-	"github.com/Ephget/ephget/internal/footprint"
-	"github.com/Ephget/ephget/internal/lockfile"
-	"github.com/Ephget/ephget/internal/paths"
-	"github.com/Ephget/ephget/internal/reap"
-	"github.com/Ephget/ephget/internal/state"
-	"github.com/Ephget/ephget/internal/ttl"
+	"github.com/Dryd33n/ephget/internal/config"
+	"github.com/Dryd33n/ephget/internal/footprint"
+	"github.com/Dryd33n/ephget/internal/lockfile"
+	"github.com/Dryd33n/ephget/internal/paths"
+	"github.com/Dryd33n/ephget/internal/reap"
+	"github.com/Dryd33n/ephget/internal/state"
+	"github.com/Dryd33n/ephget/internal/ttl"
 )
 
 const createNewConsole = 0x00000010

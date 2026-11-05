@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Ephget/ephget/internal/fsutil"
-	"github.com/Ephget/ephget/internal/lockfile"
+	"github.com/Dryd33n/ephget/internal/fsutil"
+	"github.com/Dryd33n/ephget/internal/lockfile"
 )
 
 // Pin is a frozen version (section 7, Versions and updates).

@@ -1,4 +1,4 @@
-module github.com/Ephget/ephget
+module github.com/Dryd33n/ephget
 
 go 1.27
 
