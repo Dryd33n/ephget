@@ -557,5 +557,41 @@ class BucketChoice(unittest.TestCase):
     def test_nirsoft_is_out(self):
         self.assertNotIn("Nirsoft", bi.BUCKETS)
 
+
+class SiteIndex(unittest.TestCase):
+    def test_keeps_web_addresses_and_licences(self):
+        details = bi.site_details({"homepage": " https://example.org/app ", "license": "MIT"})
+        self.assertEqual(details, {"homepage": "https://example.org/app", "license": "MIT"})
+        details = bi.site_details({"homepage": "http://example.org", "license": {"identifier": "GPL-3.0", "url": "https://x"}})
+        self.assertEqual(details, {"homepage": "http://example.org", "license": "GPL-3.0"})
+
+    def test_refuses_anything_a_link_could_abuse(self):
+        for homepage in ("javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,x", "vbscript:x",
+                         "file:///C:/Windows", "//example.org", "https://", "", None, 5, ["https://x"]):
+            with self.subTest(homepage=homepage):
+                self.assertEqual(bi.site_details({"homepage": homepage})["homepage"], "")
+
+    def test_missing_and_oversized_fields(self):
+        self.assertEqual(bi.site_details({}), {"homepage": "", "license": ""})
+        long = bi.site_details({"homepage": "https://x.example/" + "a" * 1000, "license": "L" * 1000})
+        self.assertEqual(len(long["homepage"]), bi.MAX_SITE_FIELD)
+        self.assertEqual(len(long["license"]), bi.MAX_SITE_FIELD)
+
+    def test_client_index_stays_as_it_was(self):
+        result = bi.assess("app", "Extras", {**GUI, "homepage": "https://x.example", "license": "MIT"})
+        self.assertEqual(result["site"], {"homepage": "https://x.example", "license": "MIT"})
+        self.assertNotIn("homepage", result["package"])
+        self.assertNotIn("license", result["package"])
+
+    def test_lists_only_published_apps_with_their_details(self):
+        result = bi.assess("app", "Extras", {**GUI, "homepage": "https://x.example", "license": "MIT"})
+        scanned = {"Extras": {"apps": {"app": result, "dropped": {"package": None, "blockers": ["x"]}}}}
+        index = bi.site_index([result["package"]], scanned, "2026-11-05T00:00:00Z")
+        self.assertEqual(index["generated"], "2026-11-05T00:00:00Z")
+        self.assertEqual(index["apps"], [{
+            "id": "app", "name": "App", "version": "1.0", "description": "An app.", "bucket": "Extras",
+            "homepage": "https://x.example", "license": "MIT",
+        }])
+
 if __name__ == "__main__":
     unittest.main()

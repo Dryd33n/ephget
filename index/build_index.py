@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build ephget's index from Scoop bucket manifests.
 
-Writes index.json.gz and index.json.gz.sha256, plus report.json (not published)
-listing why each excluded app was left out. Manifests are only ever parsed as
+Writes index.json.gz and index.json.gz.sha256, site-index.json for the website, and
+report.json (not published), listing why each excluded app was left out. Manifests are only ever parsed as
 JSON: nothing from a bucket is executed. Uses the standard library alone.
 
 Usage:
@@ -38,6 +38,7 @@ MAX_GZ_BYTES = 300_000
 # A floor well under the real count, so a broken clone can't publish an index
 # that empties every client's catalog.
 MIN_PACKAGES = 1000
+MAX_SITE_FIELD = 300
 
 ARCH_NAMES = {"64bit": "x64", "arm64": "arm64"}
 SHA256_RE = re.compile(r"^(?:sha256:)?([0-9a-fA-F]{64})$")
@@ -302,6 +303,18 @@ def persist_items(manifest: dict) -> list[str]:
     return items
 
 
+def site_details(manifest: dict) -> dict:
+    """What only the website needs, so the client's index stays small. Manifests are
+    untrusted and the page turns the homepage into a link, so it must be a web address."""
+    homepage = str(manifest.get("homepage", "")).strip()
+    if urlsplit(homepage).scheme.lower() not in ("http", "https") or not urlsplit(homepage).netloc:
+        homepage = ""
+    licence = manifest.get("license", "")
+    if isinstance(licence, dict):  # {"identifier": ..., "url": ...}
+        licence = licence.get("identifier", "")
+    return {"homepage": homepage[:MAX_SITE_FIELD], "license": " ".join(str(licence).split())[:MAX_SITE_FIELD]}
+
+
 def assess(app_id: str, bucket: str, manifest: dict) -> dict:
     """Return {"package": entry or None, "blockers": [...], "tier": ...} for a manifest."""
     version = str(manifest.get("version", ""))
@@ -333,6 +346,7 @@ def assess(app_id: str, bucket: str, manifest: dict) -> dict:
             "persist": persist_items(manifest),
             "installers": installers,
         },
+        "site": site_details(manifest),
         "blockers": [],
     }
 
@@ -599,6 +613,22 @@ def validate(packages: list[dict], size: int, min_packages: int = MIN_PACKAGES) 
     return problems
 
 
+def site_index(packages: list[dict], scanned: dict[str, dict], generated: str) -> dict:
+    """The website's copy of the catalog: the apps people can add, and how to learn more."""
+    apps = []
+    for package in packages:
+        result = scanned[package["bucket"]]["apps"].get(package["id"], {})
+        apps.append({
+            "id": package["id"],
+            "name": package["name"],
+            "version": package["version"],
+            "description": package["description"],
+            "bucket": package["bucket"],
+            **result.get("site", {"homepage": "", "license": ""}),
+        })
+    return {"generated": generated, "apps": apps}
+
+
 def encode_index(packages: list[dict], generated: str) -> bytes:
     payload = json.dumps(
         {"schema": SCHEMA, "generated": generated, "packages": packages},
@@ -665,6 +695,10 @@ def build(buckets_dir: Path, state_path: Path | None, out_dir: Path, update: boo
         f"{hashlib.sha256(data).hexdigest()}  index.json.gz\n".encode()
     )
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out_dir / "site-index.json").write_text(
+        json.dumps(site_index(packages, scanned, generated), separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
     return 0
 
 

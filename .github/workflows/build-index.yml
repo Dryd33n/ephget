@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+  push: # so a change to the website goes live without waiting for the next build
+    branches: [main]
+    paths:
+      - "site/**"
 
 permissions:
   contents: write # publish the release
@@ -71,7 +75,33 @@ jobs:
           echo "built $built, served $served, listed $listed"
           [ "$served" = "$built" ] && [ "$listed" = "$built" ]
 
+      - name: Assemble the website
+        run: |
+          mkdir out/site
+          cp -r ../site/. out/site/
+          cp out/site-index.json out/site/
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: index/out/site
+
       # GitHub disables scheduled workflows after 60 days without repository
       # activity, which this repo could otherwise reach between client releases.
       - name: Keep the schedule enabled
         run: gh workflow enable build-index.yml
+
+  # Separate, because only this job needs permission to publish the site. Pages serves
+  # the catalog from the page's own domain, which a fetch of a release asset can't do.
+  deploy-site:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -8,6 +8,8 @@ Some apps you only need once or rarely: a disk utility, a file converter, a one-
 
 > **Status: early pre-release.** v0.1.1 hasn't yet been tested on a clean machine, so expect rough edges.
 
+**[Browse the app catalog](https://dryd33n.github.io/ephget/)**
+
 ## Install
 
 In PowerShell:
@@ -62,7 +64,7 @@ The catalog comes from the manifests in [Scoop](https://scoop.sh)'s buckets, but
 
 It only includes apps that work without those scripts, so it leaves out many apps that need a real installer. [Ways to expand the catalog](docs/expanding-the-catalog.md) covers what's missing and why.
 
-A daily [workflow](.github/workflows/build-index.yml) rebuilds the catalog from the code in [`index/`](index/README.md).
+A daily [workflow](.github/workflows/build-index.yml) rebuilds the catalog from the code in [`index/`](index/README.md), and publishes the [website](site/index.html) alongside it.
 
 ## What it does on your PC
 

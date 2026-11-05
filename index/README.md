@@ -20,7 +20,8 @@ python -m unittest
 python -I build_index.py --update --check-urls --buckets .cache/scoop --state .cache/state.json --out out
 ```
 
-This writes three files to `out/`: `index.json.gz`, `index.json.gz.sha256`, and
+This writes four files to `out/`: `index.json.gz`, `index.json.gz.sha256`,
+`site-index.json` for the website, which adds each app's homepage and licence, and
 `report.json`, which isn't published and says why each excluded app was left out.
 
 `--update` clones or fetches the buckets. `--state` keeps each manifest's result

@@ -288,6 +288,12 @@ A manifest's URL can die long before its manifest changes, and the user would ot
 
 This can't catch a working URL that serves the wrong file, which only downloading and hashing would show. Those apps fail verification on first click.
 
+### Website
+
+Each build also deploys `site/` to GitHub Pages, at `https://dryd33n.github.io/ephget/`: the install line and a searchable catalog on one static page, with no framework. It reads `site-index.json`, built in the same run, which adds each app's homepage and licence to what the client's index holds. Pages serves that file from the page's own domain, because a browser can't read a release asset from another site.
+
+Catalog text comes from third-party manifests, so the indexer keeps only `http` and `https` homepages, the page only ever inserts catalog text as plain text, and its content security policy stops anything loading from elsewhere.
+
 ### Publishing
 
 - Artifact: `index.json.gz` attached to a rolling `index` release of `Dryd33n/ephget`, plus `index.json.gz.sha256` and `NOTICE.md`, which holds the buckets' licence notices. It is never marked as the latest release, because `releases/latest` is for ephget itself.

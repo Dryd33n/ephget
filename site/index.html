@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ephget</title>
+<meta name="description" content="Desktop shortcuts for portable Windows apps that download on first use and clean up after themselves.">
+<meta name="color-scheme" content="light dark">
+<!-- Catalog text comes from third-party manifests, so nothing may run or load from elsewhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<style>
+  :root {
+    --bg: #fbfbfa; --surface: #ffffff; --text: #1d2125; --muted: #5d656e;
+    --line: #dfe2e5; --accent: #0b6bcb; --accent-soft: #e7f1fb; --code-bg: #f1f2f3; --ok: #1a7f37;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111315; --surface: #181b1e; --text: #e8eaec; --muted: #9aa3ac;
+      --line: #2b3035; --accent: #62aef5; --accent-soft: #17293b; --code-bg: #22262a; --ok: #4cc26b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 56px 0 32px; }
+  h1 { margin: 0; font-size: 2.25rem; line-height: 1.1; letter-spacing: -0.02em; }
+  .lead { margin: 12px 0 0; font-size: 1.15rem; color: var(--muted); max-width: 62ch; }
+  h2 { margin: 0 0 12px; font-size: 1.25rem; }
+  .command {
+    display: flex; align-items: center; gap: 12px; margin-top: 24px; padding: 8px 8px 8px 14px;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .command code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 0.9rem; padding: 4px 0; }
+  button {
+    font: inherit; font-size: 0.875rem; color: var(--text); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.copied { color: var(--ok); border-color: var(--ok); }
+  .note { margin: 12px 0 0; font-size: 0.875rem; color: var(--muted); max-width: 70ch; }
+  .links { margin: 16px 0 0; font-size: 0.95rem; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  main { padding-bottom: 64px; }
+  .controls { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 12px 0; border-bottom: 1px solid var(--line); }
+  #search {
+    width: 100%; font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+  }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+  .filters button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  #status { margin-left: auto; font-size: 0.875rem; color: var(--muted); }
+  #apps { list-style: none; margin: 0; padding: 0; }
+  .app { display: flex; gap: 16px; align-items: flex-start; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .app-body { flex: 1; min-width: 0; }
+  .app-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+  .app-name { font-weight: 600; overflow-wrap: anywhere; }
+  .app-version { font-size: 0.8125rem; color: var(--muted); overflow-wrap: anywhere; }
+  .app-desc { margin: 2px 0 0; overflow-wrap: anywhere; }
+  .app-meta { margin: 4px 0 0; font-size: 0.8125rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 14px; overflow-wrap: anywhere; }
+  .add { flex: none; max-width: 45%; text-align: left; }
+  .add code { font-size: 0.8125rem; overflow-wrap: anywhere; white-space: normal; }
+  #more { display: block; margin: 20px auto 0; }
+  #more[hidden] { display: none; } /* an id rule would otherwise beat the hidden attribute */
+  .message { padding: 40px 0; text-align: center; color: var(--muted); }
+  footer { padding: 24px 0 48px; border-top: 1px solid var(--line); font-size: 0.875rem; color: var(--muted); }
+  @media (max-width: 560px) {
+    header { padding-top: 32px; }
+    h1 { font-size: 1.9rem; }
+    .app { flex-direction: column; gap: 8px; }
+    .add { max-width: 100%; }
+    #status { margin-left: 0; width: 100%; }
+    .command code { white-space: normal; overflow-wrap: anywhere; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ephget</h1>
+    <p class="lead">Desktop shortcuts for portable Windows apps that download on first use and clean up after themselves.</p>
+    <div class="command">
+      <code id="install">irm https://github.com/Dryd33n/ephget/releases/latest/download/install.ps1 | iex</code>
+      <button type="button" data-copy="install">Copy</button>
+    </div>
+    <p class="note">Run it in PowerShell. It needs no admin rights. Windows Defender or SmartScreen may warn about ephget, because it isn't code-signed yet and it downloads and starts other programs.</p>
+    <p class="links">
+      <a href="https://github.com/Dryd33n/ephget">GitHub</a>
+      <a href="https://github.com/Dryd33n/ephget/blob/main/install.ps1">Read the install script</a>
+      <a href="https://github.com/Dryd33n/ephget/releases/latest">Latest release</a>
+    </p>
+  </header>
+
+  <main>
+    <h2>App catalog</h2>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search apps" aria-label="Search apps" autocomplete="off" spellcheck="false">
+      <div class="filters" role="group" aria-label="Filter by kind">
+        <button type="button" data-kind="all" aria-pressed="true">All</button>
+        <button type="button" data-kind="apps" aria-pressed="false">Apps</button>
+        <button type="button" data-kind="games" aria-pressed="false">Games</button>
+        <button type="button" data-kind="sysinternals" aria-pressed="false">Sysinternals</button>
+        <span id="status" role="status" aria-live="polite">Loading the catalog...</span>
+      </div>
+    </div>
+    <ul id="apps"></ul>
+    <button type="button" id="more" hidden>Show more</button>
+    <noscript><p class="message">Searching the catalog needs JavaScript. You can also run <code>ephget search &lt;name&gt;</code>.</p></noscript>
+  </main>
+
+  <footer>
+    <span id="generated"></span>
+    The catalog comes from <a href="https://scoop.sh">Scoop</a>'s manifests, but ephget doesn't use Scoop and never runs a manifest's scripts. Each app has its own licence. ephget itself is under the <a href="https://github.com/Dryd33n/ephget/blob/main/LICENSE">GPL</a>.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const PAGE_SIZE = 60;
+const KINDS = {
+  all: () => true,
+  apps: app => app.bucket === "Main" || app.bucket === "Extras",
+  games: app => app.bucket === "Games",
+  sysinternals: app => app.bucket === "Sysinternals",
+};
+
+const list = document.getElementById("apps");
+const search = document.getElementById("search");
+const statusLine = document.getElementById("status");
+const more = document.getElementById("more");
+
+let apps = [];
+let kind = "all";
+let matches = [];
+let shown = 0;
+
+// Everything from the catalog goes through textContent, and links through safeUrl,
+// because it comes from third-party manifests.
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function safeUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+async function copyText(text, button) {
+  const label = button.dataset.label || button.textContent;
+  button.dataset.label = label;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch {
+    // Older browsers, or a page not served over HTTPS.
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    try { copied = document.execCommand("copy"); } catch { copied = false; }
+    area.remove();
+  }
+  if (!copied) return;
+  // A row's button holds the command, so keep its width steady by only marking it.
+  button.classList.add("copied");
+  if (button.dataset.copy) button.textContent = "Copied";
+  setTimeout(() => {
+    button.classList.remove("copied");
+    if (button.dataset.copy) button.textContent = label;
+  }, 1500);
+}
+
+function row(app) {
+  const item = el("li", "app");
+  const body = el("div", "app-body");
+  const title = el("div", "app-title");
+  title.append(el("span", "app-name", app.name), el("span", "app-version mono", app.version));
+  body.append(title);
+  if (app.description) body.append(el("p", "app-desc", app.description));
+
+  const meta = el("div", "app-meta");
+  const home = safeUrl(app.homepage);
+  if (home) {
+    const link = el("a", "", "Homepage");
+    link.href = home;
+    link.rel = "noopener noreferrer nofollow";
+    meta.append(link);
+  }
+  if (app.license) meta.append(el("span", "", app.license));
+  if (meta.childElementCount) body.append(meta);
+
+  const command = "ephget add " + app.id;
+  const add = el("button", "add");
+  add.type = "button";
+  add.title = "Copy this command";
+  add.setAttribute("aria-label", "Copy the command: " + command);
+  add.append(el("code", "", command));
+  add.addEventListener("click", () => copyText(command, add));
+
+  item.append(body, add);
+  return item;
+}
+
+function showMore() {
+  const fragment = document.createDocumentFragment();
+  for (const app of matches.slice(shown, shown + PAGE_SIZE)) fragment.append(row(app));
+  list.append(fragment);
+  shown = Math.min(shown + PAGE_SIZE, matches.length);
+  more.hidden = shown >= matches.length;
+  more.textContent = "Show more (" + (matches.length - shown) + " left)";
+}
+
+// Names that start with the search come first, then the rest in catalog order.
+function rank(app, query) {
+  if (!query) return 0;
+  if (app.idLower === query) return 0;
+  if (app.nameLower === query) return 1;
+  if (app.idLower.startsWith(query) || app.nameLower.startsWith(query)) return 2;
+  return 3;
+}
+
+function update() {
+  const query = search.value.trim().toLowerCase();
+  const words = query.split(/\s+/).filter(Boolean);
+  const inKind = KINDS[kind];
+  const found = apps.filter(app => inKind(app) && words.every(word => app.text.includes(word)));
+  matches = found
+    .map((app, order) => ({ app, order, rank: rank(app, query) }))
+    .sort((a, b) => a.rank - b.rank || a.order - b.order)
+    .map(entry => entry.app);
+
+  list.replaceChildren();
+  shown = 0;
+  showMore();
+  statusLine.textContent = matches.length === 1 ? "1 app" : matches.length.toLocaleString() + " apps";
+  if (matches.length === 0) {
+    const note = el("li", "message", query ? "No apps match that search." : "No apps here.");
+    list.append(note);
+  }
+
+  const url = new URL(location.href);
+  if (search.value.trim()) url.searchParams.set("q", search.value.trim());
+  else url.searchParams.delete("q");
+  if (kind !== "all") url.searchParams.set("kind", kind);
+  else url.searchParams.delete("kind");
+  history.replaceState(null, "", url);
+}
+
+function setKind(next) {
+  kind = next;
+  for (const button of document.querySelectorAll("[data-kind]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.kind === kind));
+  }
+}
+
+for (const button of document.querySelectorAll("[data-copy]")) {
+  button.addEventListener("click", () => copyText(document.getElementById(button.dataset.copy).textContent, button));
+}
+for (const button of document.querySelectorAll("[data-kind]")) {
+  button.addEventListener("click", () => { setKind(button.dataset.kind); update(); });
+}
+search.addEventListener("input", update);
+more.addEventListener("click", showMore);
+
+(async () => {
+  const params = new URLSearchParams(location.search);
+  search.value = params.get("q") || "";
+  const wanted = params.get("kind");
+  if (wanted && Object.hasOwn(KINDS, wanted)) setKind(wanted);
+  try {
+    const response = await fetch("site-index.json");
+    if (!response.ok) throw new Error(response.status);
+    const data = await response.json();
+    apps = data.apps.map(app => ({
+      ...app,
+      idLower: app.id.toLowerCase(),
+      nameLower: app.name.toLowerCase(),
+      text: [app.id, app.name, app.description].join(" ").toLowerCase(),
+    }));
+    const when = new Date(data.generated);
+    if (!isNaN(when)) {
+      document.getElementById("generated").textContent = "Catalog updated " + when.toLocaleDateString(undefined, { dateStyle: "medium" }) + ". ";
+    }
+    update();
+  } catch {
+    statusLine.textContent = "";
+    list.replaceChildren(el("li", "message", "The catalog couldn't load. Try refreshing, or run: ephget search <name>"));
+  }
+})();
+</script>
+</body>
+</html>
