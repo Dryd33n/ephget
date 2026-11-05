@@ -1,5 +1,7 @@
 # ephget
 
+A simple lightweight ephemeral portable app installer for Windows written in Go.
+
 Desktop shortcuts for portable Windows apps that download on first use and clean up after themselves.
 
 Some apps you only need once or rarely: a disk utility, a file converter, a one-off viewer. Installing them leaves clutter behind. With ephget, the shortcut exists before the app does. The first click downloads the app, and once you've gone a while without using it, the app is deleted. The shortcut stays, so the next click brings it back.
